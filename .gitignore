@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+.DS_Store
+.env
+data/*
+!data/.gitkeep
+imports/*
+!imports/.gitkeep
+backups/
+*.sqlite*
+*.db*
+.venv/
+
+# Private planning, client evidence and local setup notes stay on this machine.
+/START_HERE.md
+/concepts_brief.md
+/fmcg_dashboard_brief.md
+/mission_control_build_plan.md
+/mission_control_build_prompts.md
+/hermes/
+/docs/builder_brief.md
+/docs/decisions.md
+/docs/implementation_readiness.md
+/docs/first_slice_validation.md
+/docs/screenshots/

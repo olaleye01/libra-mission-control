@@ -1,0 +1,262 @@
+'use strict';
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icons = {
+  overview:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  ship:'<path d="m3 15 9 4 9-4-2 6H5zM6 14V7h12v7M10 7V3h4v4M3 23q2-2 4 0 2-2 5 0 3-2 5 0 2-2 4 0"/>',
+  upload:'<path d="M12 16V3m-4 4 4-4 4 4M4 14v6a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-6"/>',
+  shield:'<path d="m12 3 8 3v6c0 5-8 9-8 9S4 17 4 12V6z"/><path d="m8 12 3 3 5-6"/>',
+  link:'<path d="m10 13 4-4M8 15l-2 2a4 4 0 0 1-5-5l4-4a4 4 0 0 1 5 0m4 1 2-2a4 4 0 0 1 5 5l-4 4a4 4 0 0 1-5 0"/>',
+  logout:'<path d="M10 4H4v16h6m4-12 4 4-4 4m-6-4h10"/>',
+  bell:'<path d="M5 16h14l-2-3V9a5 5 0 0 0-10 0v4zM10 20h4"/>',
+  search:'<circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/>',
+  arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',
+  warning:'<path d="m12 3 10 18H2zM12 9v5m0 3v.1"/>',
+  file:'<path d="M13 3H5v18h14V9zM13 3v6h6M8 13h8m-8 4h6"/>',
+  database:'<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 4 16 4 16 0V5M4 12c0 4 16 4 16 0"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/>',
+  close:'<path d="m6 6 12 12M6 18 18 6"/>',
+  check:'<path d="m5 12 4 4L19 6"/>'
+};
+const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.file}</svg>`;
+const states = ['Awaiting arrival','In clearing','In delivery','Delivered','Completed'];
+const names = {overview:'Overview',shipments:'Shipments',imports:'Import centre',qac:'QAC review'};
+const fields = {pre_alert:'Pre-alert',eta:'ETA',berth:'Actual berth · ATA/ATD',paar:'PAAR received',obl:'OBL received',assessment:'Legacy assessment',duty_receipt:'Duty receipt',exam:'Customs examination',customs_release:'Customs release',do:'Shipping release · DO',tdo:'Terminal Delivery Order',gate_out:'Gate-out',warehouse:'Factory / warehouse arrival',terminal_validity:'Terminal validity',ecd:'ECD received'};
+const sourceHeaders = ['S/N','Pre-alert date','Item description','BOL number','Terminal','Shipping line','ETA','ATD · GZI actual berth','Container count','Container size','PAAR date','OBL received','Assessment date','SGD number','Duty received date','Customs exam','Customs release','Shipping release / DO','TDO','Gate-out','Factory arrival (check section header)','Comments','File handler','Remark','Terminal validity','PCA Final Closure','ECD','Clearing income','Haulage income','Projected total income','Clearing cost','Haulage cost','Projected total expenses','Projected profit'];
+const state = {page:'overview',client:'',filter:'',search:'',issues:false,pageNumber:1,clients:[],batches:[],overview:null,csrf:null,batch:null,previewPage:1,previewIssues:false,detail:null,version:0};
+let searchTimer, toastTimer, detailVersion = 0, tableVersion = 0;
+
+function date(value) { if (!value) return 'Not recorded'; return new Date(value+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
+function number(value) { return Number(value || 0).toLocaleString('en-GB'); }
+function initials(value) { return value ? value.split(/\s+/).slice(0,2).map(x=>x[0]).join('').toUpperCase() : '—'; }
+function warnings(record) { return (record.issues || []).filter(x=>x.severity==='warning'); }
+function pill(value) { return `<span class="state-pill stage-${states.indexOf(value)}">${esc(value)}</span>`; }
+function paintIcons(root=document) { $$('[data-icon]',root).forEach(x=>x.innerHTML=icon(x.dataset.icon)); }
+function syncSidebar() { const open=$('#sidebar').classList.contains('open');$('#sidebar').inert=matchMedia('(max-width:680px)').matches&&!open;$('#mobile-menu').setAttribute('aria-expanded',String(open)); }
+function toast(message) { clearTimeout(toastTimer); $('#toast').textContent=message; $('#toast').hidden=false; toastTimer=setTimeout(()=>$('#toast').hidden=true,4500); }
+async function api(path, body) {
+  const options = {credentials:'same-origin',headers:{}};
+  if (body !== undefined) { options.method='POST'; options.headers={'Content-Type':'application/json','X-CSRF-Token':state.csrf || ''}; options.body=JSON.stringify(body); }
+  const response = await fetch(path,options);
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    if (response.status===401 && state.csrf) {state.csrf=null; await showAuth();}
+    throw new Error(payload.error || 'The request could not be completed.');
+  }
+  return payload;
+}
+function notice(text, warning=false) { return `<div class="notice ${warning?'warning':''}">${icon(warning?'warning':'info')}<span>${text}</span></div>`; }
+function empty(title,text,action='imports',button='Preview a report',symbol='ship') {
+  return `<div class="empty-state"><div class="empty-icon">${icon(symbol)}</div><h3>${esc(title)}</h3><p>${esc(text)}</p>${action?`<button class="button primary" data-go="${action}">${esc(button)} ${icon('arrow')}</button>`:''}</div>`;
+}
+
+async function showAuth() {
+  const session = await api('/api/session');
+  state.configured = session.configured;
+  $('#boot').hidden=true;
+  if (session.authenticated) { state.csrf=session.csrf; $('#auth-screen').hidden=true; $('#app').hidden=false; return start(); }
+  $('#app').hidden=true; $('#auth-screen').hidden=false;
+  $('#auth-title').textContent=session.configured?'Welcome back.':'Your workspace starts here.';
+  $('#auth-description').textContent=session.configured?'Sign in to your local shipment register.':'Create owner access before working with private shipment records.';
+  $('#auth-submit').innerHTML=(session.configured?'Sign in':'Create owner access')+' '+icon('arrow');
+  $('#confirm-wrap').hidden=session.configured;
+  $('#confirm-password').required=!session.configured;
+  $('#password').autocomplete=session.configured?'current-password':'new-password';
+}
+
+$('#auth-form').addEventListener('submit', async event=>{
+  event.preventDefault(); $('#auth-error').textContent='';
+  if (!state.configured && $('#password').value!==$('#confirm-password').value) {$('#auth-error').textContent='Passwords do not match.'; return;}
+  const button=$('#auth-submit'); button.disabled=true;
+  try {
+    const result=await api(state.configured?'/api/auth/login':'/api/auth/setup',{password:$('#password').value});
+    state.csrf=result.csrf; $('#auth-form').reset(); $('#auth-screen').hidden=true; $('#app').hidden=false; await start();
+  } catch(error) {$('#auth-error').textContent=error.message;} finally {button.disabled=false;}
+});
+
+async function refreshMeta() {
+  const [clients,batches,overview]=await Promise.all([api('/api/clients'),api('/api/imports'),api('/api/overview')]);
+  state.clients=clients.clients; state.batches=batches.imports; state.overview=overview;
+  $('#nav-total').textContent=number(overview.total); $('#nav-qac').textContent=number(overview.rows_with_issues);
+  $('#nav-imports').textContent=number(batches.imports.filter(x=>x.status==='preview').length);
+  $('#sidebar-clients').innerHTML=state.clients.map(c=>`<button class="client-nav ${state.client===String(c.id)?'selected':''}" data-client="${c.id}"><span class="client-dot"></span>${esc(c.name)}<small>${number(c.shipment_count)}</small></button>`).join('');
+}
+async function start() { await refreshMeta(); await render(); }
+async function navigate(page,client=state.client) {
+  state.page=page; state.client=client; state.filter=''; state.search=''; state.pageNumber=1; state.issues=false;
+  $('#sidebar').classList.remove('open'); syncSidebar(); await render();
+}
+function heading() {
+  const text={overview:['Shipment overview','Track the whole journey. Know what needs your attention.'],shipments:['Shipment register','Every client, every milestone, in one shared register.'],imports:['Import centre','Preview first. Keep the source. Apply only what you have reviewed.'],qac:['QAC review queue','Review inconsistencies before they become operational assumptions.']};
+  return `<div class="page-heading"><div><span class="eyebrow">LIBRA CIRCLE / CLEARING OPERATIONS</span><h1>${text[state.page][0]}</h1><p>${text[state.page][1]}</p></div><div class="heading-actions"><button class="button secondary" data-go="${state.page==='imports'?'shipments':'imports'}">${icon(state.page==='imports'?'ship':'file')}${state.page==='imports'?'View register':'Import history'}</button>${state.page!=='imports'?`<button class="button primary" data-go="imports">${icon('upload')}Import shipments</button>`:''}</div></div>`;
+}
+function tabs() {
+  return `<div class="context-strip"><div class="client-tabs"><button class="client-tab ${!state.client?'active':''}" data-client="">All clients</button>${state.clients.map(c=>`<button class="client-tab ${state.client===String(c.id)?'active':''}" data-client="${c.id}">${esc(c.name)}<span class="tab-number">${number(c.shipment_count)}</span></button>`).join('')}</div><span class="test-badge">TEST WORKSPACE</span></div>`;
+}
+function cards(overview) {
+  const notes=['Berthing not recorded','Reported arrival','Movement / delivery','Historical proposals','Closure confirmed'];
+  return `<div class="state-grid">${states.map((s,i)=>`<button class="state-card stage-${i} ${state.filter===s?'selected':''}" data-state="${s}"><span class="card-label"><i class="state-dot"></i>${s}</span><strong class="card-number">${number(overview.states[s])}</strong><span class="card-foot">${notes[i]}${icon('arrow')}</span></button>`).join('')}</div>`;
+}
+async function render() {
+  const version=++state.version; $('#breadcrumb').textContent=names[state.page];
+  $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page));
+  $$('.client-nav').forEach(b=>b.classList.toggle('selected',b.dataset.client===state.client));
+  $('#main').innerHTML=heading()+`<div class="panel"><div class="skeleton" aria-label="Loading workspace"></div></div>`;
+  try {
+    if (state.page==='imports') {
+      const data=await api('/api/sources'); if(version!==state.version) return;
+      renderImports(data.sources); return;
+    }
+    const query=new URLSearchParams(); if(state.client)query.set('client_id',state.client);
+    const overview=await api('/api/overview?'+query); if(version!==state.version)return;
+    const top=heading()+tabs()+(state.page==='qac'?notice(`${number(overview.rows_with_issues)} records have review findings. A finding describes a source-data question, not confirmed noncompliance.`,true):cards(overview));
+    $('#main').innerHTML=top+`<div id="register-panel" class="panel"></div>`+(state.page==='overview'?lowerPanels(): '');
+    await loadTable(version);
+  } catch(error) { if(version===state.version)$('#main').innerHTML=heading()+`<div class="inline-error" role="alert">${esc(error.message)}<br><button class="button secondary" id="retry-load">Try again</button></div>`; }
+}
+function lowerPanels() {
+  return `<div class="lower-grid"><section class="panel"><div class="panel-header"><div class="panel-title">Recent imports</div><button class="text-link" data-go="imports">View all ${icon('arrow')}</button></div><div class="small-panel-body">${state.batches.length?state.batches.slice(0,3).map(b=>`<div class="import-row"><span class="file-icon">${icon('file')}</span><div><strong>${esc(b.filename)}</strong><small>${esc(b.client_name)} · ${number(b.summary.shipments)} shipments · ${b.report_date?'Cut-off '+date(b.report_date):'Cut-off not supplied'}</small></div><button class="badge ${b.status==='preview'?'preview':''}" data-batch="${b.id}">${b.status==='preview'?'Review preview':'Applied to test'}</button></div>`).join(''):'<div class="import-row"><span class="file-icon">'+icon('file')+'</span><div><strong>No reports imported yet</strong><small>Your originals and import history will appear here.</small></div></div>'}</div></section><section class="panel"><div class="panel-header"><div class="panel-title">Workspace connections</div><span class="count-tag">FIRST SLICE</span></div><div class="small-panel-body"><div class="connection-row"><span>${icon('database')}Shipment API</span><span class="connection-state on">Connected locally</span></div><div class="connection-row"><span>${icon('link')}Hermes fleet</span><span class="connection-state">Not connected</span></div><div class="connection-row"><span>${icon('bell')}Telegram & reminders</span><span class="connection-state">Delivery disabled</span></div></div></section></div>`;
+}
+async function loadTable(version=state.version) {
+  const ticket=++tableVersion;
+  const query=new URLSearchParams({page:state.pageNumber,limit:12});
+  if(state.client)query.set('client_id',state.client); if(state.filter)query.set('state',state.filter);
+  if(state.search)query.set('search',state.search); if(state.issues||state.page==='qac')query.set('issues','1');
+  const result=await api('/api/shipments?'+query); if(version!==state.version||ticket!==tableVersion)return;
+  const panel=$('#register-panel'); if(!panel)return;
+  const title=state.page==='qac'?'Records to review':'Shipment register';
+  panel.innerHTML=`<div class="panel-header"><div><div class="panel-title">${title}<span class="count-tag">${number(result.total)}</span></div><p class="panel-subtitle">${state.filter?esc(state.filter)+' · ':''}Historical source proposals · test register</p></div><span class="report-label">${state.overview.total?'Source cut-off may be unknown':'Start with your GZI report'}</span></div><div class="table-toolbar"><div class="filter-tabs"><button class="filter-tab ${!state.issues?'active':''}" data-issues="0">${state.page==='qac'?'All findings':'All shipments'}</button>${state.page!=='qac'?`<button class="filter-tab ${state.issues?'active':''}" data-issues="1">Needs review</button>`:''}</div><div class="search-box"><span>${icon('search')}</span><input id="shipment-search" type="search" placeholder="Search BL, client, handler…" aria-label="Search shipments" value="${esc(state.search)}"></div></div>${result.total?shipmentTable(result.shipments):empty(state.search||state.filter||state.issues?'No matching shipments':'Your register is ready',state.search||state.filter||state.issues?'Try another search, state or client filter.':'Preview the GZI report, review the findings, then apply it to your test register.',state.search||state.filter||state.issues?'':'imports')}${result.total?`<div class="table-footer"><span>Showing ${(result.page-1)*result.limit+1}–${Math.min(result.page*result.limit,result.total)} of ${number(result.total)} shipments</span><div class="pagination"><button class="page-button" data-page-turn="-1" ${result.page<=1?'disabled':''}>← Previous</button><span class="page-button active">${result.page}</span><button class="page-button" data-page-turn="1" ${result.page*result.limit>=result.total?'disabled':''}>Next →</button></div></div>`:''}`;
+}
+function shipmentTable(records,preview=false) {
+  return `<div class="table-scroll"><table class="shipments-table"><thead><tr><th>Shipment / bill of lading</th><th>Client</th><th>Terminal / line</th><th>Containers</th><th>Reported stage</th><th>File handler</th><th>Review</th></tr></thead><tbody>${records.map(r=>`<tr data-${preview?'preview-row':'shipment'}="${preview?r.source_row:r.id}"><td><button class="bl-button" data-${preview?'preview-row':'shipment'}="${preview?r.source_row:r.id}">${esc(r.bl)}</button><span class="cargo-description" title="${esc(r.description)}">${esc(r.description)}</span></td><td><span class="table-client">${esc(r.client_name||state.batch?.client_name||'GZI')}</span></td><td class="terminal-line">${esc(r.terminal||'Not recorded')}<small>${esc(r.liner||'Line unknown')}</small></td><td>${r.container_count?number(r.container_count):'Unknown'}${r.container_size?` × ${esc(r.container_size)}′`:''}</td><td>${pill(r.state||r.proposed_state)}</td><td><span class="handler"><span class="mini-avatar">${esc(initials(r.handler))}</span>${esc(r.handler||'Unassigned')}</span></td><td>${warnings(r).length?`<span class="issue-label">${icon('warning')}${warnings(r).length} ${warnings(r).length===1?'finding':'findings'}</span>`:'<span class="muted">Source only</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderImports(sources) {
+  state.sources=sources;
+  $('#main').innerHTML=heading()+notice('Imports stay separate from the register until you review and apply them. Applying here creates test records only; reminders remain off.')+`<div class="upload-layout"><section class="panel"><div class="panel-header"><div class="panel-title">Preview a client report</div><span class="count-tag">CSV</span></div><form id="upload-form" class="upload-form"><label id="drop-zone" class="drop-zone" for="csv-file"><span class="empty-icon">${icon('upload')}</span><strong>Drop a report here, or choose a file</strong><p>UTF-8 CSV · up to 5 MB · original preserved</p><input id="csv-file" name="csv-file" type="file" accept=".csv,text/csv"></label><div class="form-grid"><div class="field"><label for="import-client">Client</label><select id="import-client">${state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><small>Reviewed mapping: GZI report v1. Other client mappings follow later.</small></div><div class="field"><label for="report-date">Reporting cut-off <span class="muted">(optional)</span></label><input id="report-date" type="date"><small>Leave empty if unknown. The filename is not a confirmed cut-off.</small></div></div><p id="import-error" class="form-error" role="alert"></p><button id="upload-submit" type="submit" class="button primary">Build import preview ${icon('arrow')}</button></form></section><section class="panel source-card"><span class="eyebrow">AVAILABLE ON THIS MACHINE</span><h2 class="panel-title">Start with the GZI report</h2><p>Use the supplied source without uploading it again. It will be checked with the same importer.</p>${sources.length?sources.map(s=>`<div class="source-file"><strong>${icon('file')}${esc(s.filename)}</strong><small>${number(Math.round(s.size/1024))} KB · GZI mapping · source file</small><button class="button secondary" data-source="${s.id}">Preview this report ${icon('arrow')}</button></div>`).join(''):'<p>No bundled source is available. Choose a CSV to begin.</p>'}<p>The importer keeps repeated BLs separate and highlights ambiguous dates, release gaps and partial-delivery notes.</p></section></div><div id="preview-target"></div><section class="panel"><div class="panel-header"><div class="panel-title">Import history<span class="count-tag">${state.batches.length}</span></div></div><div class="small-panel-body">${state.batches.length?state.batches.map(b=>`<div class="import-row"><span class="file-icon">${icon('file')}</span><div><strong>${esc(b.filename)}</strong><small>${esc(b.client_name)} · ${number(b.summary.shipments)} shipments · ${b.report_date?date(b.report_date):'Unknown cut-off'}</small></div><button class="badge ${b.status==='preview'?'preview':''}" data-batch="${b.id}">${b.status==='preview'?'Open preview':'View applied batch'}</button></div>`).join(''):'<div class="import-row muted">No import previews yet.</div>'}</div></section>`;
+  const zone=$('#drop-zone');
+  ['dragenter','dragover'].forEach(type=>zone.addEventListener(type,e=>{e.preventDefault();zone.classList.add('drag');}));
+  ['dragleave','drop'].forEach(type=>zone.addEventListener(type,e=>{e.preventDefault();zone.classList.remove('drag');}));
+  zone.addEventListener('drop',e=>{if(e.dataTransfer.files.length){$('#csv-file').files=e.dataTransfer.files;}});
+  $('#upload-form').addEventListener('submit',upload);
+  if(state.batch)renderPreview();
+}
+async function upload(event) {
+  event.preventDefault(); const file=$('#csv-file').files[0];
+  if(!file){$('#import-error').textContent='Choose a CSV file, or use the available GZI source.';return;}
+  if(file.size>5*1024*1024){$('#import-error').textContent='The maximum CSV size is 5 MB.';return;}
+  const reader=new FileReader(); reader.onload=()=>preview({filename:file.name,content_base64:reader.result.split(',')[1]});reader.onerror=()=>$('#import-error').textContent='The selected file could not be read.';reader.readAsDataURL(file);
+}
+async function preview(payload) {
+  $('#import-error').textContent=''; const buttons=$$('#upload-form button,[data-source]');buttons.forEach(b=>b.disabled=true);
+  const client=$('#import-client').value,cutoff=$('#report-date').value;
+  try {
+    const result=await api('/api/imports/preview',{...payload,client_id:client,report_date:cutoff||null});
+    state.batch=result.batch;state.previewPage=1;state.previewIssues=false;await refreshMeta();
+    if(state.page==='imports'){renderImports(state.sources);$('#import-client').value=client;$('#report-date').value=cutoff;$('#preview-target').scrollIntoView({behavior:'smooth',block:'start'});}
+    toast(result.reused?'Opened the existing preview. No duplicate batch created.':'Preview ready. No shipment records applied yet.');
+  } catch(error){if($('#import-error'))$('#import-error').textContent=error.message;else toast(error.message);} finally {buttons.forEach(b=>b.disabled=false);}
+}
+async function openBatch(id) {
+  const result=await api('/api/imports/'+encodeURIComponent(id));state.batch=result.batch;state.previewPage=1;state.previewIssues=false;
+  if(state.page!=='imports'){state.page='imports';await render();}else renderPreview();
+  $('#preview-target')?.scrollIntoView({behavior:'smooth',block:'start'});
+}
+function renderPreview() {
+  const target=$('#preview-target');if(!target||!state.batch)return;
+  const b=state.batch,s=b.summary; const records=state.previewIssues?b.records.filter(r=>warnings(r).length):b.records;
+  const from=(state.previewPage-1)*10, page=records.slice(from,from+10);
+  target.innerHTML=`<section class="panel preview-panel"><div class="preview-header"><div><span class="eyebrow">${b.status==='applied'?'APPLIED TO TEST REGISTER':'IMPORT PREVIEW / NOT YET APPLIED'}</span><h2>${esc(b.filename)}</h2><p>${esc(b.client_name)} · GZI report v1 · ${b.report_date?'Reporting cut-off '+date(b.report_date):'Reporting cut-off unknown'}</p></div>${b.status==='preview'?`<button class="button primary" id="apply-import">Apply to test register ${icon('arrow')}</button>`:`<button class="button secondary" data-go="shipments">View register ${icon('arrow')}</button>`}</div><div class="preview-stats"><div class="preview-stat"><strong>${number(s.shipments)}</strong><span>Shipment rows</span></div><div class="preview-stat"><strong>${number(s.unique_bls)}</strong><span>Distinct BLs</span></div><div class="preview-stat"><strong>${number(s.rows_with_issues)}</strong><span>Records to review</span></div><div class="preview-stat"><strong>${number(s.physical_rows-s.shipments)}</strong><span>Non-shipment rows excluded</span></div></div><div class="source-note">${s.duplicate_groups?`${number(s.duplicate_groups)} repeated-BL group · records will remain separate. `:''}Stages are historical proposals. ECD does not establish Completed; quantities and dates may need review.<br>Excluded: ${Object.entries(s.excluded).map(([k,v])=>`${esc(k)} ${v}`).join(' · ')}</div><div class="table-toolbar"><div class="filter-tabs"><button class="filter-tab ${!state.previewIssues?'active':''}" data-preview-issues="0">All source rows</button><button class="filter-tab ${state.previewIssues?'active':''}" data-preview-issues="1">Needs review</button></div><span class="report-label">Click a BL to inspect its source and milestones</span></div>${page.length?shipmentTable(page,true):empty('No review findings','There are no warning-level findings in this selection.','') }<div class="preview-pagination"><span>${records.length?from+1:0}–${Math.min(from+10,records.length)} of ${number(records.length)} records</span><div class="pagination"><button class="page-button" data-preview-page="-1" ${state.previewPage<=1?'disabled':''}>← Previous</button><button class="page-button" data-preview-page="1" ${from+10>=records.length?'disabled':''}>Next →</button></div></div></section><div class="notice warning">${icon('info')}<span>Applying preserves every original value and keeps historical-state warnings. No live reminders or verified release claims will be created.</span></div>`;
+}
+function confirmApply() {
+  const b=state.batch;
+  $('#action-content').innerHTML=`<span class="test-badge">TEST REGISTER ONLY</span><h2 id="action-title">Apply ${number(b.summary.shipments)} shipment records?</h2><p>The original report and all findings will be retained. These are historical proposals, not verified live shipment statuses.</p><form id="apply-form"><label><input id="confirm-test" type="checkbox" required><span>I have reviewed the preview and understand this applies records to the test register. Notifications remain disabled.</span></label><p id="apply-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close-action>Keep reviewing</button><button class="button primary" type="submit">Apply test import</button></div></form>`;
+  $('#action-dialog').showModal();
+  $('#apply-form').addEventListener('submit',async event=>{
+    event.preventDefault();const button=$('button[type=submit]',event.currentTarget);button.disabled=true;
+    try {await api('/api/imports/'+b.id+'/apply',{confirm_test_import:true});$('#action-dialog').close();state.batch=null;await refreshMeta();await navigate('overview');toast('Import applied to your test register. All source findings retained.');}
+    catch(error){$('#apply-error').textContent=error.message;button.disabled=false;}
+  });
+}
+
+async function openShipment(id) {
+  const version=++detailVersion;
+  $('#detail-content').innerHTML='<div class="detail-body"><div class="skeleton" aria-label="Loading shipment"></div></div>';
+  if(!$('#detail-dialog').open)$('#detail-dialog').showModal();
+  try {const result=await api('/api/shipments/'+encodeURIComponent(id));if(version===detailVersion&&$('#detail-dialog').open){state.detail=result.shipment;renderDetail();}}
+  catch(error){if(version===detailVersion)$('#detail-content').innerHTML=`<div class="detail-body"><button class="icon-button" data-close-detail aria-label="Close">${icon('close')}</button><p role="alert">${esc(error.message)}</p></div>`;}
+}
+function openPreviewRow(row) {
+  const record=state.batch?.records.find(r=>r.source_row===Number(row));if(!record)return;
+  ++detailVersion;state.detail={...record,client_name:state.batch.client_name,filename:state.batch.filename,report_date:state.batch.report_date,batch_id:state.batch.id,job_id:'Preview · row '+row,history:[{at:state.batch.created_at,actor:'owner',action:'import_preview_created'}]};renderDetail();$('#detail-dialog').showModal();
+}
+function renderDetail(tab='milestones') {
+  const r=state.detail,d=r.dates;
+  $('#detail-content').innerHTML=`<header class="detail-top"><div class="detail-topline"><span>${esc(r.client_name)} / ${esc(r.job_id)}</span><button class="icon-button" data-close-detail aria-label="Close shipment details">${icon('close')}</button></div><h2 id="detail-title">${esc(r.bl)}</h2><p>${esc(r.description)}</p><div class="detail-badges">${pill(r.state||r.proposed_state)}<span class="badge preview">Historical proposal</span><span class="badge">CSV row ${r.source_row}</span></div></header><div class="detail-tabs"><button class="detail-tab ${tab==='milestones'?'active':''}" data-detail-tab="milestones">Shipment & milestones</button><button class="detail-tab ${tab==='source'?'active':''}" data-detail-tab="source">Original source & history</button></div><div class="detail-body">${tab==='milestones'?`
+    ${notice(esc(r.state_note),true)}
+    <div class="detail-facts"><div class="fact"><span>Terminal / location</span><strong>${esc(r.terminal||'Not recorded')}</strong></div><div class="fact"><span>Shipping line</span><strong>${esc(r.liner||'Not recorded')}</strong></div><div class="fact"><span>Containers</span><strong>${r.container_count?number(r.container_count):'Count unknown'}${r.container_size?' × '+esc(r.container_size)+'′':''}</strong></div><div class="fact"><span>File handler</span><strong>${esc(r.handler||'Unassigned')}</strong></div><div class="fact"><span>SGD reference</span><strong>${esc(r.sgd||'Not recorded')}</strong></div><div class="fact"><span>Pending containers</span><strong>Not established</strong></div></div>
+    <section class="detail-section"><h3>Documents & milestones</h3><div class="milestone-grid">${Object.entries(fields).map(([key,label])=>`<div class="milestone ${d[key]?'recorded':''}"><span class="milestone-label"><i class="milestone-dot"></i>${label}</span><span class="milestone-value ${!d[key]?'missing':''}">${d[key]?date(d[key]):'Not recorded / review'}</span></div>`).join('')}</div><p class="detail-note">Legacy assessment is not automatically a client-approved final assessment. Receipt dates are reported facts; they do not confirm payment.</p></section>
+    <section class="detail-section"><h3>Release prerequisites</h3>${notice(d.do?'DO date is recorded in the source. TDO container coverage still needs verification.':'DO is not dated in the source. TDO readiness cannot be established.',!d.do)}${notice(d.tdo&&d.customs_release?'TDO and Customs release dates are recorded. Container coverage and actual gate-out authorization are not verified.':'Gate-out prerequisites are incomplete: '+[!d.tdo?'TDO':null,!d.customs_release?'Customs release':null].filter(Boolean).join(' and ')+'.',!(d.tdo&&d.customs_release))}</section>
+    <section class="detail-section"><h3>Source comment</h3><div class="comment-box">${esc(r.comments||'No comment recorded.')}</div></section>
+    <section class="detail-section"><h3>Review findings <span class="count-tag">${warnings(r).length}</span></h3>${r.issues.length?r.issues.map(i=>`<div class="finding">${icon(i.severity==='info'?'info':'warning')}<div><p>${esc(i.message)}</p><small>${esc(i.field||'Record')} · ${esc(i.severity)}</small></div></div>`).join(''):'<p class="detail-note">No automated findings. The source has not been independently verified.</p>'}</section>
+    <section class="detail-section"><h3>Administrative closure</h3><p class="detail-note">ECD: ${d.ecd?date(d.ecd):'not confirmed from this source'}. Shipping-line final invoice applicability, empty returns and client invoicing are not established by this report. This record cannot be marked Completed by the importer.</p></section>`:
+    `<section class="detail-section"><h3>Source provenance</h3><p class="source-meta">File: ${esc(r.filename)}<br>Section: ${esc(r.section)}<br>Physical CSV row: ${r.source_row}<br>Reporting cut-off: ${r.report_date?date(r.report_date):'Unknown'}<br>Import batch: ${esc(r.batch_id)}<br>Evidence: ${esc(r.evidence)}</p>${notice('These are the original cell values. Unreadable and conflicting values are retained, not overwritten.')}<table class="raw-table"><tbody>${r.raw.map((v,i)=>`<tr><td>${String.fromCharCode(65+Math.floor(i/26)-1).replace('@','')}${String.fromCharCode(65+i%26)} · ${esc(sourceHeaders[i]||'Column '+(i+1))}</td><td>${v?esc(v):'<span class="muted">Empty cell</span>'}</td></tr>`).join('')}</tbody></table></section>`}</div>`;
+  if(tab==='source') {
+    const entries=(r.history||[]).map(e=>`<div class="connection-row"><span>${icon('clock')}${esc(e.action==='import_preview_created'?'Import preview created':e.action==='test_import_applied'?'Applied to test register':e.action)}</span><span>${esc(new Date(e.at*1000).toLocaleString('en-GB',{timeZone:'Africa/Lagos',dateStyle:'medium',timeStyle:'short'}))} · ${esc(e.actor)}</span></div>`).join('');
+    $('.detail-body',$('#detail-content')).insertAdjacentHTML('beforeend',`<section class="detail-section"><h3>Recorded application history</h3>${entries||'<p class="detail-note">No application events are available.</p>'}<p class="detail-note">Times shown in Africa/Lagos. The original report does not identify historical update actors or update times.</p></section>`);
+  }
+}
+
+function addClient() {
+  $('#action-content').innerHTML=`<span class="eyebrow">CLIENT REGISTER</span><h2 id="action-title">Add a client</h2><p>Create the client now. Its source mapping can be reviewed when the report is available.</p><form id="client-form"><div class="field"><label for="client-name">Client name</label><input id="client-name" minlength="2" maxlength="60" required placeholder="e.g. Nestlé"></div><p id="client-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button secondary" data-close-action>Cancel</button><button type="submit" class="button primary">Add client</button></div></form>`;
+  $('#action-dialog').showModal();
+  $('#client-form').addEventListener('submit',async event=>{
+    event.preventDefault();const button=$('button[type=submit]',event.currentTarget);button.disabled=true;
+    try{await api('/api/clients',{name:$('#client-name').value});$('#action-dialog').close();await refreshMeta();await render();toast('Client added. No shipment data was created.');}
+    catch(error){$('#client-error').textContent=error.message;button.disabled=false;}
+  });
+}
+function notificationsInfo() {
+  $('#action-content').innerHTML=`<span class="eyebrow">WORKSPACE STATUS</span><h2 id="action-title">Reminders come next.</h2><p>This first slice supports test imports and shipment visibility. Hermes, Telegram and scheduled reminders are not connected.</p><p class="detail-note">The planned owner schedule is 08:00 and 16:00 Africa/Lagos. No outbound notifications are active.</p><div class="dialog-actions"><button class="button primary" data-close-action>Understood</button></div>`;$('#action-dialog').showModal();
+}
+
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('button');const row=event.target.closest('tr[data-shipment],tr[data-preview-row]');
+  try{
+    if(button?.dataset.page){await navigate(button.dataset.page);return;}
+    if(button?.dataset.go){await navigate(button.dataset.go);return;}
+    if(button?.hasAttribute('data-client')){state.client=button.dataset.client;state.pageNumber=1;state.filter='';state.search='';if(state.page==='imports')state.page='shipments';$('#sidebar').classList.remove('open');syncSidebar();await render();return;}
+    if(button?.dataset.state){state.filter=state.filter===button.dataset.state?'':button.dataset.state;state.pageNumber=1;await render();return;}
+    if(button?.hasAttribute('data-issues')){state.issues=button.dataset.issues==='1';state.pageNumber=1;await loadTable();return;}
+    if(button?.dataset.pageTurn){state.pageNumber+=Number(button.dataset.pageTurn);await loadTable();return;}
+    if(button?.dataset.source){await preview({source_id:button.dataset.source});return;}
+    if(button?.dataset.batch){await openBatch(button.dataset.batch);return;}
+    if(button?.hasAttribute('data-preview-issues')){state.previewIssues=button.dataset.previewIssues==='1';state.previewPage=1;renderPreview();return;}
+    if(button?.dataset.previewPage){state.previewPage+=Number(button.dataset.previewPage);renderPreview();return;}
+    const shipment=button?.dataset.shipment||row?.dataset.shipment;if(shipment){await openShipment(shipment);return;}
+    const previewRow=button?.dataset.previewRow||row?.dataset.previewRow;if(previewRow){openPreviewRow(previewRow);return;}
+    if(button?.dataset.detailTab){renderDetail(button.dataset.detailTab);return;}
+    if(button?.hasAttribute('data-close-detail')){$('#detail-dialog').close();return;}
+    if(button?.hasAttribute('data-close-action')){$('#action-dialog').close();return;}
+    if(button?.id==='apply-import'){confirmApply();return;}
+    if(button?.id==='retry-load'){await render();return;}
+  }catch(error){toast(error.message);}
+});
+document.addEventListener('input',event=>{
+  if(event.target.id==='shipment-search'){
+    state.search=event.target.value;state.pageNumber=1;clearTimeout(searchTimer);
+    const version=++state.version;
+    searchTimer=setTimeout(async()=>{try{const position=event.target.selectionStart;await loadTable(version);const input=$('#shipment-search');if(input&&version===state.version){input.focus();input.setSelectionRange(position,position);}}catch(error){toast(error.message);}},300);
+  }
+});
+$('#add-client').addEventListener('click',addClient);
+$('#mobile-menu').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');syncSidebar();});
+matchMedia('(max-width:680px)').addEventListener('change',syncSidebar);
+$('#notification-info').addEventListener('click',notificationsInfo);
+$('#logout').addEventListener('click',async()=>{try{await api('/api/auth/logout',{});state.csrf=null;state.batch=null;await showAuth();}catch(error){toast(error.message);}});
+$('#detail-dialog').addEventListener('click',event=>{if(event.target===$('#detail-dialog'))$('#detail-dialog').close();});
+paintIcons();syncSidebar();
+showAuth().catch(error=>{$('#boot').innerHTML=`<span class="brand-symbol">L</span><p>Workspace unavailable</p><p>${esc(error.message)}</p><button class="button secondary" id="boot-retry">Try again</button>`;$('#boot-retry').onclick=()=>location.reload();});
