@@ -1,6 +1,7 @@
 """Join immutable imports with independently versioned operational records."""
 import json
 from workflow import initial, derive
+from coordination import normalize
 
 
 def records(con, client_id=None, as_of=None):
@@ -24,6 +25,6 @@ def records(con, client_id=None, as_of=None):
             r.update(raw=[], dates={}, issues=[], comments='', section='Manual entry', proposed_state='Awaiting arrival', evidence='Owner recorded · not independently verified')
         r.update(job_id='LMC-{:05d}'.format(r['id']), revision=r['revision'] or 0)
         r['source_snapshot'] = json.loads(raw_record) if raw_record else None
-        data = json.loads(data) if data else initial(r)
+        data = normalize(json.loads(data)) if data else initial(r)
         result.append(derive(r, data, movements.get(r['id'], []), bool(row['data']), as_of))
     return result

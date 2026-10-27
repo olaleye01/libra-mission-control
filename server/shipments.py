@@ -3,7 +3,8 @@ from collections import Counter
 
 from imports import STATES
 from records import records
-from operations import date
+from operations import date, choice
+from coordination import TEAMS, STATUSES, QUEUES, counts
 
 
 def all_records(app, client_id=None, as_of=None):
@@ -29,7 +30,8 @@ def register(route, ApiError):
                 "known_container_total": sum(r["container_count"] or 0 for r in records),
                 "unknown_container_count": sum(not r["container_count"] for r in records),
                 "terminals": dict(terminal_counts.most_common(5)),
-                "action_count": sum(len(r["actions"]) for r in records),
+                "action_count": sum(a["status"] != "resolved" for r in records for a in r["actions"]),
+                "queue_counts": counts([a for r in records for a in r["actions"]]),
                 "mode": "test", "hermes": "not_connected", "notifications": "disabled"}
 
     @route("GET", "/api/shipments")
@@ -44,7 +46,7 @@ def register(route, ApiError):
         if state:
             records = [r for r in records if r["state"] == state]
         if search:
-            records = [r for r in records if search in " ".join(str(r[k]) for k in ("job_id", "bl", "description", "terminal", "liner", "handler", "sgd", "client_name")).lower()]
+            records = [r for r in records if search in " ".join(str(r[k]) for k in ("job_id", "bl", "description", "terminal", "liner", "field_agent", "import_officer", "sgd", "client_name")).lower()]
         if query.get("issues") == "1":
             records = [r for r in records if any(i["severity"] == "warning" for i in r["issues"])]
         try:
@@ -77,9 +79,24 @@ def register(route, ApiError):
     def actions(req, query, body):
         as_of = date(query.get("as_of"))
         jobs = all_records(req.app, client_filter(query), as_of)
-        return {"actions": [{**a, "shipment_id": r["id"], "job_id": r["job_id"], "client_name": r["client_name"],
-                             "bl": r["bl"], "historical": not r["operation"]["reconciled"]}
-                            for r in jobs for a in r["actions"]], "notifications": "disabled"}
+        team = choice(query.get('team', ''), ('', *TEAMS), 'team filter')
+        status = choice(query.get('status', ''), ('', *STATUSES), 'status filter')
+        queue = choice(query.get('queue', 'all'), ('all', *QUEUES), 'queue filter')
+        items = [{**a, 'shipment_id': r['id'], 'job_id': r['job_id'], 'client_name': r['client_name'],
+                  'bl': r['bl'], 'historical': not r['operation']['reconciled']}
+                 for r in jobs for a in r['actions']]
+        team_counts = {key: sum(a['team'] == key and a['status'] != 'resolved' for a in items) for key in TEAMS}
+        if team:
+            items = [a for a in items if a['team'] == team]
+        queue_counts = counts(items)
+        if status:
+            items = [a for a in items if a['status'] == status]
+        else:
+            items = [a for a in items if a['status'] != 'resolved']
+        if queue != 'all':
+            items = [a for a in items if queue in a['queues']]
+        return {'actions': items, 'queue_counts': queue_counts, 'team_counts': team_counts, 'teams': TEAMS,
+                'queues': QUEUES, 'statuses': STATUSES, 'notifications': 'disabled', 'reminder_recipient': 'Owner'}
 
     @route("GET", "/api/audit")
     def audit(req, query, body):

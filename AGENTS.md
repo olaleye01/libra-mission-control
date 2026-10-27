@@ -12,6 +12,9 @@ Read README.md and docs/api.md for the checked-in scope. When available locally,
 
 ## Business rules
 
+- File Handler in the report means Field Agent. Import Officer is separately accountable for the whole job and initially defaults to Owner. Calculated actions default to that officer, not the field agent; explicit assignments and reminder recipient are separate. Team labels do not grant permissions.
+- Regulatory requirements/authority rules are deferred until the owner supplies the detailed process. Only owner-entered issues and explicitly selected process holds are implemented; never infer a cause, authority obligation or exemption.
+
 - Multiple clients from the start. GZI imports map recognized headings in any order with optional columns; only a unique BL heading/value identifies a shipment. Missing/blank/uninterpretable fields remain pending source data, not confirmed outstanding documents. Preserve actual headings and raw cells. Repeated ambiguous headings require review. Other clients still need independently reviewed mappings.
 - Five lifecycle labels: Awaiting arrival, In clearing, In delivery, Delivered, Completed. GZI ATA/ATD is actual berthing, not warehouse arrival. ETA passing is not actual arrival.
 - Preserve DO, Customs release, TDO, gate-out and warehouse arrival separately. DO supports TDO; TDO plus Customs release supports gate-out, for the relevant containers. Do not add a Customs-before-TDO rule.

@@ -1,6 +1,6 @@
 # Libra Mission Control
 
-A local test workspace for multi-client shipment visibility. The first two slices include owner access, client records, reviewed GZI imports, a searchable register, manual shipment entry, audited milestone/invoice updates, count-based movements, closure checks and internal follow-ups.
+A local test workspace for multi-client shipment visibility. Slices 1–2.1 include owner access, client records, reviewed GZI imports, a searchable register, manual shipment entry, audited milestone/invoice updates, count-based movements, closure checks internal follow-ups and an Import Officer coordination desk.
 
 Python's standard library is the only backend dependency. The custom HTML/CSS/JavaScript frontend has no package-install or build step.
 
@@ -64,6 +64,20 @@ All containers at the warehouse means Delivered. Completed additionally requires
 The **Outstanding actions** page calculates internal follow-ups: five calendar days before ETA, assessment/duty receipt, requested invoices/reported unpaid invoices, more than five days since actual berth without dated TDO, ECD after seven days and closure. Missing source dates/statuses require confirmation. Historical date calculations use a supplied report cut-off; unknown cut-offs do not become today's age. Split warehouse-delivery dates show an unresolved ECD anchor. Rating-expiry actions, closure weekdays and all external reminder scheduling remain deferred.
 
 Saves are transactional and revision checked. Repeating the same command ID/body returns its original result; changing that body or saving a stale revision returns 409. A pre-slice-2 SQLite backup is created under the application's private data/backups before upgrading a first-slice database; imports, internal IDs and owner access are preserved. Backups contain private data and must remain outside source control.
+
+## Import Officer desk and team coordination
+
+The report's **File Handler is the Field Agent**. The **Import Officer** owns the whole clearing job and defaults to Owner in this owner-only pilot. Create/edit forms show these separately. The register lists the Field Agent; the assigned Import Officer(s) appear once in the persistent job header across its detail tabs. `handler` remains a compatibility alias for `field_agent`; it is no longer an independent responsibility or the default follow-up owner. Original CSV headings/cells remain unchanged.
+
+Use the **Import Officer desk** to filter by client, responsible team and status. Its five overlapping queues show My next actions (open/in-progress actions assigned to the Import Officer), Awaiting responses, Clearing blockers, Delivery progress and Closure. The overview links to these queues. Queue counts are item counts; one item can appear in more than one queue. Team choices are Import Officer, Field Agent, Accounts, QAC, Regulatory and Unassigned. These are coordination labels, not staff accounts or new access permissions.
+
+Calculated follow-ups default to the job's Import Officer. Assign their next action in **Follow-ups**, with a responsible team/person, blocker, source and recorded action. A blank person uses the job's officer or field agent for those teams; other teams remain unassigned until a person is named. The reminder recipient is separately fixed to Owner, and sending remains disabled. Awaiting response does not establish receipt/payment or resolve the underlying requirement. Imported history and older explicit assignments are preserved; old assignments without a team are marked for review rather than silently reassigned.
+
+Use **Team coordination** on a shipment to create multiple manual tasks or regulatory issues. Supply a title, work area, responsible team, next action and source; authority/person/blocker are optional. Statuses are Open, In progress, Awaiting response and Resolved. Resolved needs a note and date. Reopening retains the earlier resolution and audit history. Resolved items remain on the job and can be viewed with the desk's Resolved filter.
+
+No authority list or regulatory requirements are inferred. The detailed Regulatory process is deferred until supplied. You may explicitly record a hold on TDO, gate-out, warehouse arrival or completion. Only that named step is held; the backend blocks a new entry at that step until resolved, while an explicit observed-fact exception can retain a reported movement/release and leaves the hold open. Completion holds cannot be bypassed, and a completed job must be reopened before adding one. Recording coordination about an old source gap does not require inventing missing release facts or changing its original snapshot.
+
+All coordination changes share the shipment revision check, idempotency key and before/after audit history. No service connects to or contacts a team member, authority, client or provider.
 
 ## Next
 

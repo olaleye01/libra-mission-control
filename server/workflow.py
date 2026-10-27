@@ -5,12 +5,13 @@ import re
 from zoneinfo import ZoneInfo
 
 from imports import DATE_FIELDS
+from coordination import normalize, action, holds
 
 INVOICE_KEYS = ('shipping', 'additional', 'terminal')
 CLOSURE_KEYS = ('empty_returns', 'shipping_final')
-TEXT_FIELDS = ('bl', 'description', 'terminal', 'liner', 'handler', 'field_agent', 'sgd', 'container_size')
+TEXT_FIELDS = ('bl', 'description', 'terminal', 'liner', 'handler', 'field_agent', 'import_officer', 'sgd', 'container_size')
 DATE_KEYS = tuple(k for k in DATE_FIELDS if k not in ('gate_out', 'warehouse')) + ('draft_received', 'draft_approved', 'client_invoiced')
-ACTION_KEYS = ('shipping_invoice', 'rotation', 'paar', 'obl', 'draft', 'draft_approval', 'final_assessment', 'assessment_details', 'duty_receipt', 'terminal_invoice', 'tdo_age', 'ecd', 'closure', 'reported_blocker', 'additional_invoice', 'shipping_payment', 'additional_payment', 'terminal_payment')
+ACTION_KEYS = ('shipping_invoice', 'rotation', 'paar', 'obl', 'draft', 'draft_approval', 'final_assessment', 'assessment_details', 'duty_receipt', 'terminal_invoice', 'tdo_age', 'ecd', 'closure', 'reported_blocker', 'additional_invoice', 'shipping_payment', 'additional_payment', 'terminal_payment', 'delivery_progress')
 
 
 def today():
@@ -26,7 +27,7 @@ def initial(record, manual=False):
                               'rated_through': None, 'coverage': k, 'applicability': 'unknown', 'reason': ''} for k in INVOICE_KEYS},
                 closure={k: {'applicability': 'unknown', 'date': None, 'reason': ''} for k in CLOSURE_KEYS},
                 completed=False, followups={})
-    return data
+    return normalize(data)
 
 
 def active_events(events):
@@ -61,6 +62,7 @@ def movement_problems(data, events):
 
 
 def derive(record, data, events, operational=False, as_of=None):
+    data = normalize(data)
     r = copy.deepcopy(record)
     r.update({k: data[k] for k in TEXT_FIELDS})
     r.update(container_count=data['container_count'], operational=operational, operation=copy.deepcopy(data), movements=events)
@@ -69,6 +71,11 @@ def derive(record, data, events, operational=False, as_of=None):
     r['issues'] = copy.deepcopy(source.get('issues', []) if source is not None else record.get('issues', []) if 'operational' not in record else [])
     for i in r['issues']:
         i['source'] = 'Original import'
+    if data.get('legacy_handler'):
+        r['issues'].append({'code': 'ownership_review', 'severity': 'warning', 'field': 'field_agent', 'message': 'Earlier File Handler and Field Agent entries differ. Field Agent retained; earlier handler remains available for review: '+data['legacy_handler'], 'source': 'Owner record'})
+    for item in data['coordination'].values():
+        if item['status'] != 'resolved' and item['blocks_step']:
+            r['issues'].append({'code': 'manual_hold', 'severity': 'warning', 'field': item['blocks_step'], 'message': 'Owner-recorded hold: '+item['title'], 'source': item['source']})
     active = active_events(events)
     gated = sum(e['quantity'] for e in active if e['kind'] == 'gate_out')
     delivered = sum(e['quantity'] for e in active if e['kind'] == 'warehouse')
@@ -108,6 +115,8 @@ def derive(record, data, events, operational=False, as_of=None):
         item = data['closure'][key]
         if item['applicability'] == 'unknown' or (item['applicability'] == 'required' and not item['date']):
             closure_missing.append(label)
+    if holds(data, 'completion'):
+        closure_missing.append('Owner-recorded completion hold resolved')
     if problems:
         closure_missing.append('Movement/release exceptions reconciled')
     r['closure_missing'] = closure_missing
@@ -133,7 +142,8 @@ def actions(r, data, as_of):
             return
         f = followups.get(key, {})
         result.append({'key': key, 'next_action': f.get('next_action') or text, 'status': f.get('status', 'open'),
-                       'responsible': f.get('responsible') or data['handler'] or 'Unassigned', 'blocker': f.get('blocker', ''),
+                       'responsible': f.get('responsible', ''), 'team': f.get('team', 'import_officer'),
+                       'assignment_review': f.get('assignment_review', False), 'blocker': f.get('blocker', ''),
                        'source': f.get('source') or ('Owner record' if r['operational'] else 'Historical import'),
                        'last_action_at': f.get('at'), 'as_of': as_of})
 
@@ -179,8 +189,14 @@ def actions(r, data, as_of):
             add('ecd', 'Confirm ECD follow-up anchor: split delivery or delivery date unresolved')
         elif (dt.date.fromisoformat(as_of)-dt.date.fromisoformat(next(iter(arrival_dates)))).days >= 7:
             add('ecd', 'Follow up Exchange Control Documents (seven days after warehouse delivery)')
+    if r['state'] == 'In delivery' and r['pending_count']:
+        add('delivery_progress', 'Confirm warehouse delivery of '+str(r['pending_count'])+' pending containers')
     if r['state'] == 'Delivered':
         add('closure', 'Review administrative closure: '+', '.join(r['closure_missing']) if r['closure_missing'] else 'Confirm completion of this job')
     if followups.get('reported_blocker', {}).get('next_action'):
         add('reported_blocker', 'Review reported blocker')
+    result = [action(item, data) for item in result]
+    for item in data['coordination'].values():
+        result.append(action({**item, 'key': item['id'], 'item_id': item['id'],
+                              'last_action_at': item['updated_at'], 'as_of': as_of}, data, 'coordination'))
     return result

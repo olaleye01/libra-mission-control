@@ -47,7 +47,7 @@ COLUMNS = [
     ('gate_out', 'Gate-out', ('GATE OUT DATE', 'GATE OUT')),
     ('warehouse', 'Factory / warehouse arrival', ('ARRIVAL AT FACTORY', 'ARRIVAL AT CLIENTS FACTORY', 'ARRIVAL AT CLIENT FACTORY', 'WAREHOUSE ARRIVAL', 'WAREHOUSE ARRIVAL DATE', 'DELIVERY DATE')),
     ('comments', 'Comments', ('COMMENTS', 'COMMENT')),
-    ('handler', 'File handler', ('FILE HANDLER', 'HANDLER')),
+    ('handler', 'Field Agent (source File Handler)', ('FILE HANDLER', 'HANDLER', 'FIELD AGENT')),
     ('remark', 'Remark', ('REMARK', 'REMARKS')),
     ('terminal_validity', 'Terminal validity', ('TERMINAL VALIDTY', 'TERMINAL VALIDITY')),
     ('pca_closure', 'PCA Final Closure', ('PCA FINAL CLOSURE',)),
@@ -209,7 +209,7 @@ def preview_csv(content, report_date=None):
         if not count or not size:
             issue("container_review", "Container count or size is missing or ambiguous.", "containers")
         if not cells[22].strip():
-            issue("handler_missing", "No file handler is recorded.", "handler")
+            issue("handler_missing", "No field agent is recorded in the source File Handler column.", "handler")
         for earlier, later in (("pre_alert", "warehouse"), ("berth", "gate_out"),
                                ("do", "tdo"), ("tdo", "gate_out"),
                                ("customs_release", "gate_out"), ("gate_out", "warehouse")):

@@ -1,4 +1,4 @@
-# Libra application API · slices 1–2
+# Libra application API · slices 1–2.1
 
 One local server serves frontend assets and JSON endpoints. API success responses contain `ok: true`; failures contain `ok: false` and an `error` message with the appropriate HTTP status. All API data endpoints require an authenticated owner session. JSON POST bodies must be objects; the request limit is 8 MB and decoded CSV limit is 5 MB. There is no CORS access.
 
@@ -68,7 +68,7 @@ All POST actions below require owner session + CSRF, a unique safe `command_id` 
 | POST /api/shipments/{id}/followups | Record owner action / awaiting-response metadata; sends nothing |
 | GET /api/actions | Calculated internal queue, with optional `client_id` and ISO `as_of` filters |
 
-`changes` accepts `bl`, `description`, `terminal`, `liner`, `handler`, `field_agent`, `sgd` (C Number/SDG alias), `container_size`, `container_count` (integer 1–100000 or null), `approval_by`, `dates`, `reconciled`, `awaiting_duty_receipt`, `rotation`, `release_coverage`, `invoices`, `closure`, `completed`. Unknown fields are rejected. Empty dates normalize to null; all others must be valid ISO YYYY-MM-DD. All choices start unknown when absent. Client cannot be changed through this update endpoint.
+`changes` accepts `bl`, `description`, `terminal`, `liner`, `handler` (legacy alias), `field_agent`, `import_officer`, `sgd` (C Number/SDG alias), `container_size`, `container_count` (integer 1–100000 or null), `approval_by`, `dates`, `reconciled`, `awaiting_duty_receipt`, `rotation`, `release_coverage`, `invoices`, `closure`, `completed`. Unknown fields are rejected. Empty dates normalize to null; all others must be valid ISO YYYY-MM-DD. All choices start unknown when absent. Client cannot be changed through this update endpoint.
 
 - `dates`: first-slice date keys except gate_out/warehouse, plus `draft_received`, `draft_approved`, `client_invoiced`. Gate-out/warehouse dates are derived from movement events once reconciled. Actual draft approval needs draft receipt and an approver, and cannot predate receipt. Final assessment date plus non-empty `sgd` clears requirements without changing approval history.
 - `rotation`: `{status:unknown|not_requested|gotten, number:text}`; `not_requested` represents explicit nil.
@@ -82,11 +82,38 @@ All POST actions below require owner session + CSRF, a unique safe `command_id` 
 
 A movement body includes `{kind:gate_out|warehouse, quantity:integer, date, revision, reason, command_id}`. Optional `supersedes` identifies an unsuperseded event on this job of the same kind; quantity zero is only valid for such a cancellation. An identical-looking active event returns 409 unless `confirm_duplicate:true` explicitly confirms a separate load. Corrections append rows, and all dependent totals and prerequisites are recalculated. Both kinds require quantity reconciliation and a known total; gate-out counts do not reduce warehouse-pending quantities. Superseded/cancelled rows remain in the detail history.
 
-A follow-up body has `{key, status:open|awaiting_response, responsible, blocker, next_action, source, revision, reason, command_id}`. Keys are returned by calculated actions, plus `reported_blocker` for a custom next action. Empty custom next_action clears that custom item, retaining the audit event. Standard requirements disappear only when the underlying facts satisfy them; saved follow-up metadata remains in history. An empty responsible person stays unassigned unless a file handler is known.
+A follow-up body has `{key, status:open|in_progress|awaiting_response, team, responsible, blocker, next_action, source, revision, reason, command_id}`. Keys are returned by calculated actions, plus `reported_blocker` for a custom next action. Empty custom next_action clears that custom item, retaining the audit event. Standard requirements disappear only when the underlying facts satisfy them; saved follow-up metadata remains in history. The team defaults to import_officer. Empty person uses the job's Import Officer or Field Agent for that team; other teams stay Unassigned. Reminder recipient remains Owner independently. Legacy saved people without a team are preserved as unassigned-team entries with assignment_review:true.
 
 Action objects include key, next_action, status, responsible, blocker, source, last_action_at and as_of; `/api/actions` adds client_name, bl, job_id, shipment_id and historical. Historical jobs use their report cut-off, or no age calculation if unknown; reconciled jobs use today's Africa/Lagos date. `as_of` overrides calculations for review only and never sends or reschedules anything. ECD dates from split delivery require an agreed anchor. Rating-expiry and twice-weekly closure schedules are not implemented.
 
 Operational storage is separate from `import_rows`: `job_updates` holds versioned current facts, `movements` is append-only, `commands` supplies idempotency and `audit` records actor/reason/before/after/revision and movement payload. `source_snapshot` and import preview records remain byte-for-byte equivalent in meaning/content after edits. Schema upgrades preserve v1 IDs, sources and owner sessions and create a private SQLite backup first.
+
+## Ownership and coordination (slice 2.1)
+
+`import_officer` and `field_agent` are independent job text fields. The officer initially defaults to Owner; the source's File Handler seeds Field Agent. `handler` remains a compatibility alias to field_agent. An update supplying both aliases with different values returns 422. An explicit clear clears both. Previously saved nonblank Field Agent takes precedence over a conflicting old handler; `operation.legacy_handler` and an ownership_review finding retain that conflict until an explicit assignment update confirms it. Immutable imports and existing audit events are not rewritten. Old operation JSON is normalized on read without database writes; future saves include ownership_version:1 and the updated role fields. Existing explicit follow-up people without a team remain visible for assignment review.
+
+`GET /api/actions` additionally supports `team`, `status` and `queue`. Teams: import_officer, field_agent, accounts, qac, regulatory, unassigned. Statuses: open, in_progress, awaiting_response, resolved (resolved applies to manual items). Queues: all (default), my_next, awaiting_response, clearing_blockers, delivery, closure. Invalid values return 400. Default excludes resolved. Status selection applies before queue selection; resolved items have no active queue membership, so use queue=all when viewing them.
+
+Responses include teams/statuses/queues label dictionaries, team_counts, queue_counts and reminder_recipient:Owner. Team counts are active counts for the client scope; queue counts are active counts for the client and selected team before status/queue narrowing. Items can belong to multiple queues. Each action includes team, team_label, responsible, import_officer, field_agent, reminder_recipient, kind (calculated or coordination), queues, assignment_review when applicable, source, as_of and last_action_at. Manual timestamps refer to the recorded update, not evidence that an external contact occurred. Overview exposes the same client-scoped queue_counts. Known pending warehouse quantities add a delivery_progress follow-up; gate-out still does not imply delivery.
+
+`POST /api/shipments/{id}/coordination` accepts `{command_id, revision, reason, item_id?, item}` with the normal owner session/CSRF and transactional safeguards. Omit item_id to create a new generated item ID; supply an existing ID on that job to edit. Unknown or cross-job IDs return 404. Up to 500 items per job are supported. Item changes accept:
+
+| Field | Values / meaning |
+|---|---|
+| title | Required non-empty title |
+| category | clearing, delivery, closure, regulatory; grouping only |
+| team | One of the team keys above; initially import_officer |
+| responsible | Optional person; blank uses role-based job assignment where available |
+| authority | Optional owner-supplied authority text; no default or inferred requirements |
+| status | open, in_progress, awaiting_response, resolved |
+| blocker | Owner-reported blocker, not an automatically assumed cause |
+| next_action | Required non-empty action |
+| source | Required non-empty supporting record/source description |
+| blocks_step | Empty (default), tdo, gate_out, warehouse or completion; explicitly selected hold only |
+| resolution_note | Required for resolved status |
+| resolution_date | Required ISO date for resolved status; may not be future-dated |
+
+The saved item has id, created_at and updated_at. Manual item status does not populate any document or payment field. Resolution removes the item from active queues without deleting it; reopening preserves previous resolution values and audit evidence. Only explicit holds affect forward-entry gates. Observed-fact exceptions can retain reported TDO/movement facts without resolving a hold, within the existing count constraints. Completion holds cannot be bypassed by exception_reason. A completed job must be unmarked before adding an open completion hold. Merely recording a task about a historical release gap does not require repairing the old gap first. Coordination is stored separately from imports under operation.coordination; full before/after audit and shared shipment revision/idempotency rules apply. None of these labels grants staff access or sends notifications.
 
 ## Boundaries
 

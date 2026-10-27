@@ -9,6 +9,7 @@ import uuid
 
 from core import ApiError
 from records import records
+from coordination import TEAMS, STATUSES, CATEGORIES, BLOCK_STEPS, holds
 from store import encode
 from workflow import (TEXT_FIELDS, DATE_KEYS, INVOICE_KEYS, CLOSURE_KEYS, ACTION_KEYS,
                       initial, derive, active_events, movement_problems, today)
@@ -95,6 +96,12 @@ def patch(data, changes):
                 keys(fields, ('applicability', 'date', 'reason'), 'closure item')
                 for name, value in fields.items():
                     data[key][kind][name] = date(value) if name == 'date' else text(value, 'Applicability reason') if name == 'reason' else choice(value, ('unknown', 'required', 'not_applicable'), 'applicability')
+    if 'handler' in changes and 'field_agent' in changes and data['handler'] != data['field_agent']:
+        raise ApiError(422, 'File Handler is the Field Agent. Supply one consistent assignment.')
+    if 'handler' in changes or 'field_agent' in changes:
+        agent = data['field_agent'] if 'field_agent' in changes else data['handler']
+        data['field_agent'] = data['handler'] = agent
+        data['legacy_handler'] = ''
     if not data['bl']:
         raise ApiError(400, 'A Bill of Lading is required.')
     for item in list(data['invoices'].values()) + list(data['closure'].values()):
@@ -132,8 +139,47 @@ def validate(record, data, events, exception_reason):
     return candidate
 
 
+def enforce_hold(data, step, exception):
+    if holds(data, step) and not exception:
+        raise ApiError(422, 'An owner-recorded '+BLOCK_STEPS[step]+' hold is open. Resolve it first, or supply an exception reason only to retain an observed fact.')
+
+
+def update_coordination(data, identifier, fields):
+    allowed = ('title', 'category', 'team', 'responsible', 'authority', 'status', 'blocker', 'next_action',
+               'source', 'blocks_step', 'resolution_note', 'resolution_date')
+    keys(fields, allowed, 'coordination item')
+    if identifier:
+        if not isinstance(identifier, str) or identifier not in data['coordination']:
+            raise ApiError(404, 'Coordination item not found on this shipment.')
+        item = copy.deepcopy(data['coordination'][identifier])
+    else:
+        if len(data['coordination']) >= 500:
+            raise ApiError(422, 'This job has reached the 500-item coordination limit.')
+        identifier = uuid.uuid4().hex
+        item = dict(id=identifier, title='', category='clearing', team='import_officer', responsible='', authority='',
+                    status='open', blocker='', next_action='', source='', blocks_step='', resolution_note='',
+                    resolution_date=None, created_at=time.time())
+    for key, value in fields.items():
+        if key in ('category', 'team', 'status', 'blocks_step'):
+            options = {'category': CATEGORIES, 'team': TEAMS, 'status': STATUSES, 'blocks_step': BLOCK_STEPS}
+            item[key] = choice(value, options[key], key)
+        elif key == 'resolution_date':
+            item[key] = date(value)
+        else:
+            item[key] = text(value, key, 1000 if key in ('blocker', 'next_action', 'resolution_note') else 500)
+    if not item['title'] or not item['next_action'] or not item['source']:
+        raise ApiError(400, 'A coordination item needs a title, next action and supporting source.')
+    if item['resolution_date'] and item['resolution_date'] > today():
+        raise ApiError(400, 'A resolution date cannot be in the future.')
+    if item['status'] == 'resolved' and (not item['resolution_note'] or not item['resolution_date']):
+        raise ApiError(422, 'Resolved items require a resolution note and date.')
+    item['updated_at'] = time.time()
+    data['coordination'][identifier] = item
+    return identifier
+
+
 def execute(app, operation, body, identifier=None):
-    keys(body, ('command_id', 'revision', 'reason', 'changes', 'client_id', 'duplicate_reason', 'exception_reason', 'kind', 'quantity', 'date', 'supersedes', 'confirm_duplicate', 'key', 'status', 'responsible', 'blocker', 'next_action', 'source'), 'command')
+    keys(body, ('command_id', 'revision', 'reason', 'changes', 'client_id', 'duplicate_reason', 'exception_reason', 'kind', 'quantity', 'date', 'supersedes', 'confirm_duplicate', 'key', 'status', 'responsible', 'blocker', 'next_action', 'source', 'team', 'item_id', 'item'), 'command')
     token = text(body.get('command_id', ''), 'Command ID', 100)
     if not re.fullmatch(r'[A-Za-z0-9_-]{16,100}', token):
         raise ApiError(400, 'A unique command_id of 16–100 safe characters is required.')
@@ -172,6 +218,8 @@ def execute(app, operation, body, identifier=None):
             revision, before = record['revision'], copy.deepcopy(data)
             if operation == 'update':
                 patch(data, body.get('changes', {}))
+                if data['dates']['tdo'] and data['dates']['tdo'] != before['dates']['tdo']:
+                    enforce_hold(data, 'tdo', exception)
                 validate(record, data, events, exception)
             elif operation == 'movement':
                 kind = choice(body.get('kind'), ('gate_out', 'warehouse'), 'movement type')
@@ -193,6 +241,8 @@ def execute(app, operation, body, identifier=None):
                 duplicates = [e for e in active_events(events) if e['kind'] == kind and e['date'] == event_date and e['quantity'] == qty and e['id'] != supersedes]
                 if duplicates and body.get('confirm_duplicate') is not True:
                     raise ApiError(409, 'An identical-looking movement exists. Confirm a separate load explicitly or correct its event.')
+                if qty > 0:
+                    enforce_hold(data, kind, exception)
                 event = {'id': uuid.uuid4().hex, 'shipment_id': identifier, 'kind': kind, 'date': event_date, 'quantity': qty,
                          'supersedes': supersedes, 'exception_reason': exception, 'created_at': time.time()}
                 events.append(event)
@@ -200,10 +250,14 @@ def execute(app, operation, body, identifier=None):
                 con.execute('INSERT INTO movements VALUES(?,?,?,?,?,?,?,?)', tuple(event[k] for k in ('id', 'shipment_id', 'kind', 'quantity', 'date', 'supersedes', 'exception_reason', 'created_at')))
             elif operation == 'followup':
                 key = choice(body.get('key'), ACTION_KEYS, 'follow-up')
-                status = choice(body.get('status'), ('open', 'awaiting_response'), 'follow-up status')
-                data['followups'][key] = {'status': status, 'at': time.time(), **{k: text(body.get(k, ''), k) for k in ('responsible', 'blocker', 'next_action', 'source')}}
+                status = choice(body.get('status'), ('open', 'in_progress', 'awaiting_response'), 'follow-up status')
+                data['followups'][key] = {'status': status, 'team': choice(body.get('team', 'import_officer'), TEAMS, 'responsible team'), 'assignment_review': False, 'at': time.time(), **{k: text(body.get(k, ''), k) for k in ('responsible', 'blocker', 'next_action', 'source')}}
                 if key == 'reported_blocker' and not data['followups'][key]['next_action']:
                     data['followups'].pop(key)
+            elif operation == 'coordination':
+                update_coordination(data, body.get('item_id'), body.get('item', {}))
+                if data['completed'] and holds(data, 'completion'):
+                    raise ApiError(422, 'Unmark Completed before adding an unresolved completion hold.')
         # BL is a lookup aid, never a merge key. Explicit acknowledgement keeps separate jobs.
         duplicates = [r for r in all_jobs if r['id'] != identifier and r['client_id'] == record['client_id'] and r['bl'].casefold() == data['bl'].casefold()]
         if duplicates and (operation == 'create' or (before and before['bl'] != data['bl'])) and not text(body.get('duplicate_reason', ''), 'Duplicate BL reason'):
@@ -222,7 +276,7 @@ def register(route, ApiError):
     def create(req, query, body):
         return execute(req.app, 'create', body)
 
-    for path, operation in (('update', 'update'), ('movements', 'movement'), ('followups', 'followup')):
+    for path, operation in (('update', 'update'), ('movements', 'movement'), ('followups', 'followup'), ('coordination', 'coordination')):
         def register_action(path, operation):
             @route('POST', '/api/shipments/<id>/'+path)
             def action(req, query, body):
