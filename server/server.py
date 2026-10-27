@@ -32,7 +32,7 @@ class Application:
         self.auth = Auth(self.store)
         self.source_dir = Path(source_dir or ROOT / "imports" / "sources").resolve()
         self.routes = []
-        for module in ("auth", "clients", "imports", "shipments"):
+        for module in ("auth", "clients", "imports", "shipments", "operations"):
             importlib.import_module(module).register(self.route, ApiError)
 
     def route(self, method, path, public=False):
@@ -50,7 +50,7 @@ class Application:
                     continue
                 sources.append({"id": hashlib.sha256(path.read_bytes()).hexdigest(),
                                 "filename": path.name, "size": path.stat().st_size,
-                                "mapping": "gzi-v1", "client": "GZI"})
+                                "mapping": "gzi-header-v2", "client": "GZI"})
         return sources
 
 

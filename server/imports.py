@@ -1,4 +1,4 @@
-"""Reviewed GZI mapping. No silent schema guessing for additional clients."""
+"""Map available GZI headings without inventing missing source columns."""
 
 import base64
 import csv
@@ -22,6 +22,76 @@ DATE_FIELDS = {"pre_alert": 1, "eta": 6, "berth": 7, "paar": 10, "obl": 11,
 MONTHS = {m: i for i, m in enumerate(
     ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)}
 MISSING = {"", "na", "n/a", "nil", "-", "pending"}
+
+# These aliases describe known meanings, not fixed spreadsheet positions.
+COLUMNS = [
+    ('serial', 'Source serial', ('S/N', 'SN', 'Serial No')),
+    ('pre_alert', 'Pre-alert date', ('PRE-ALERT DATE', 'PRE ALERT')),
+    ('description', 'Cargo description', ('ITEM DESCRIPTION', 'DESCRIPTION OF GOODS', 'CARGO DESCRIPTION', 'DESCRIPTION')),
+    ('bl', 'Bill of Lading', ('BOL NO', 'BOL NUMBER', 'BL', 'BL NO', 'BL NUMBER', 'B/L', 'BILL OF LADING', 'BILL OF LADING NO')),
+    ('terminal', 'Terminal', ('TERMINAL', 'PORT / TERMINAL')),
+    ('liner', 'Shipping line', ('LINER', 'SHIPPING LINE')),
+    ('eta', 'ETA', ('ETA', 'EXPECTED ARRIVAL DATE')),
+    ('berth', 'Actual berth · ATA/ATD', ('ATA', 'ATD', 'ACTUAL BERTH', 'ACTUAL BERTH DATE')),
+    ('container_count', 'Container count', ('CONT COUNT', 'CONTAINER COUNT', 'NO OF CONTAINERS', 'CONTAINERS')),
+    ('container_size', 'Container size', ('CONT SIZE', 'CONTAINER SIZE')),
+    ('paar', 'PAAR received', ('PAAR DATE', 'PAAR RECEIVED DATE', 'PAAR')),
+    ('obl', 'OBL received', ('OBL RECEIVED DATE', 'OBL RECEIVED', 'OBL DATE', 'OBL')),
+    ('assessment', 'Final assessment received', ('ASSESS DATE', 'ASS DATE', 'ASSESSMENT DATE', 'FINAL ASSESSMENT RECEIVED')),
+    ('sgd', 'C Number / SGD / SDG', ('SGD NO', 'SDG NO', 'C NUMBER', 'C NO', 'SGD', 'SDG')),
+    ('duty_receipt', 'Duty receipt received', ('DUTY RECEIVED DATE', 'DUTY RECEIPT DATE', 'DUTY RECEIPT RECEIVED DATE')),
+    ('exam', 'Customs examination', ('CUSTOMS EXAM DATE', 'CUSTOMS EXAMINATION DATE')),
+    ('customs_release', 'Customs release', ('CUSTOMS RELEASE DATE', 'CUSTOMS RELEASE')),
+    ('do', 'Shipping release · DO', ('SHIPPING RELEASE DATE', 'SHIPPING RELEASE', 'DO', 'DO DATE', 'DELIVERY ORDER', 'DELIVERY ORDER DATE')),
+    ('tdo', 'Terminal Delivery Order', ('TDO DATE', 'TDO', 'TERMINAL DELIVERY ORDER', 'TERMINAL DELIVERY ORDER DATE')),
+    ('gate_out', 'Gate-out', ('GATE OUT DATE', 'GATE OUT')),
+    ('warehouse', 'Factory / warehouse arrival', ('ARRIVAL AT FACTORY', 'ARRIVAL AT CLIENTS FACTORY', 'ARRIVAL AT CLIENT FACTORY', 'WAREHOUSE ARRIVAL', 'WAREHOUSE ARRIVAL DATE', 'DELIVERY DATE')),
+    ('comments', 'Comments', ('COMMENTS', 'COMMENT')),
+    ('handler', 'File handler', ('FILE HANDLER', 'HANDLER')),
+    ('remark', 'Remark', ('REMARK', 'REMARKS')),
+    ('terminal_validity', 'Terminal validity', ('TERMINAL VALIDTY', 'TERMINAL VALIDITY')),
+    ('pca_closure', 'PCA Final Closure', ('PCA FINAL CLOSURE',)),
+    ('ecd', 'ECD received', ('ECD', 'ECD DATE', 'ECD RECEIVED DATE')),
+    ('clearing_income', 'Clearing income', ('CLEARING INCOME',)),
+    ('haulage_income', 'Haulage income', ('HAULAGE INCOME',)),
+    ('projected_income', 'Total projected income', ('TOTAL PROJECTED INCOME',)),
+    ('clearing_cost', 'Clearing cost', ('CLEARING COST',)),
+    ('haulage_cost', 'Haulage cost', ('HAULAGE COST',)),
+    ('projected_expenses', 'Total projected expenses', ('TOTAL PROJECTED EXPENSES',)),
+    ('projected_profit', 'Projected profit', ('PROJECTED PROFIT',)),
+]
+LABELS = {key: label for key, label, _ in COLUMNS}
+
+
+def heading(value):
+    return re.sub(r'[^A-Z0-9]', '', value.upper())
+
+
+ALIASES = {heading(alias): key for key, _, aliases in COLUMNS for alias in aliases}
+
+
+def map_columns(headers, number, section, allow_sparse=True):
+    positions = {}
+    for index, value in enumerate(headers):
+        key = ALIASES.get(heading(value))
+        if key:
+            positions.setdefault(key, []).append(index)
+    if 'bl' not in positions:
+        return None
+    if not allow_sparse and len(positions) == 1 and sum(bool(v.strip()) for v in headers) > 1:
+        return None
+    if len(positions['bl']) != 1:
+        raise ValueError('Bill of Lading heading repeats at row '+str(number)+'. Give the job identifier column a unique heading.')
+    # Duplicate headings carry no reliable choice of source column. Retain both for review.
+    mapped = {k: v[0] for k, v in positions.items() if len(v) == 1}
+    ambiguous = [{'field': k, 'label': LABELS[k], 'columns': [i+1 for i in v]} for k, v in positions.items() if len(v) > 1]
+    return {'header_row': number, 'section': section, 'positions': mapped,
+            'mapped': [{'field': k, 'label': LABELS[k], 'column': i+1, 'header': headers[i]} for k, i in mapped.items()],
+            'pending': [{'field': k, 'label': label, 'reason': 'ambiguous heading' if k in positions else 'column not supplied'}
+                        for k, label, _ in COLUMNS if k not in mapped and k != 'serial'],
+            'ambiguous': ambiguous,
+            'unmapped': [{'column': i+1, 'header': value or 'Unnamed column'} for i, value in enumerate(headers)
+                         if heading(value) not in ALIASES]}
 
 
 def parse_date(raw):
@@ -58,56 +128,76 @@ def preview_csv(content, report_date=None):
         raise ValueError("The file must be a valid UTF-8 CSV.")
     if len(rows) > 10000:
         raise ValueError("This preview supports at most 10,000 physical rows.")
-    header_index = next((i for i, row in enumerate(rows[:20])
-                         if len(row) >= 34 and row[0].strip().upper() == "S/N"
-                         and row[3].strip().upper() == "BOL NO"), None)
-    if header_index is None:
-        raise ValueError("This file does not match the reviewed 34-column GZI report mapping.")
-    headers = rows[header_index]
-    expected = {1: "PRE-ALERT DATE", 2: "ITEM DESCRIPTION", 4: "TERMINAL", 5: "LINER",
-                6: "ETA", 7: "ATD", 16: "CUSTOMS RELEASE DATE", 17: "SHIPPING RELEASE DATE",
-                18: "TDO DATE", 19: "GATE OUT DATE", 26: "ECD"}
-    if any(headers[i].strip().upper() != name for i, name in expected.items()):
-        raise ValueError("Columns differ from the GZI mapping. A new mapping needs review.")
     records, excluded, section = [], Counter(), "Unlabelled"
-    section_header = headers
+    current = None
+    reference_section = False
+    section_header = []
+    mappings, skipped_rows = [], []
     for number, raw in enumerate(rows, 1):
         if not any(x.strip() for x in raw):
             excluded["Blank rows"] += 1
             continue
-        label = raw[0].strip() if raw else ""
-        if label.upper() == "S/N":
-            if len(raw) != 34:
-                raise ValueError(f"Column header at CSV row {number} does not have 34 columns.")
-            section_header = raw
+        serial_index = current['positions'].get('serial') if current else None
+        numbered_data = serial_index is not None and serial_index < len(raw) and raw[serial_index].strip().isdigit()
+        candidate = None if numbered_data else map_columns(raw, number, section, allow_sparse=current is None)
+        if candidate:
+            current, section_header = candidate, raw
+            reference_section = False
+            mappings.append(candidate)
             excluded["Repeated / column headers"] += 1
             continue
-        if label and not label.isdigit():
-            section = label
+        if current is None:
+            section = next((x.strip() for x in raw if x.strip()), section)
             excluded["Section labels"] += 1
             continue
-        if not label.isdigit() or len(raw) < 4 or not raw[3].strip():
-            excluded["Reference / non-shipment rows"] += 1
+        positions = current['positions']
+        def supplied(key):
+            index = positions.get(key)
+            return raw[index] if index is not None and index < len(raw) else ''
+        bl = supplied('bl').strip()
+        serial = supplied('serial').strip()
+        occupied = [i for i, value in enumerate(raw) if value.strip()]
+        # The GZI footer starts a separate rate table headed 20ft / 40ft.
+        # Its terminal names occupy the old BL column but are not shipments.
+        if not bl and len(occupied) >= 2 and all(re.fullmatch(r'(20|40|45)FT', heading(raw[i])) for i in occupied):
+            reference_section = True
+        if reference_section:
+            excluded['Reference / non-shipment rows'] += 1
             continue
-        if len(raw) != 34:
-            raise ValueError(f"Shipment at CSV row {number} has {len(raw)} columns; expected 34.")
+        if not bl:
+            if len(occupied) == 1 and not serial.isdigit():
+                section = raw[occupied[0]].strip()
+                excluded["Section labels"] += 1
+            else:
+                excluded["Reference / non-shipment rows"] += 1
+                if serial.isdigit():
+                    skipped_rows.append({'source_row': number, 'reason': 'BL value missing; row retained in original file, not applied as a shipment.'})
+            continue
+        # Existing business rules consume named values in their established internal order.
+        # The actual raw row and its actual headings are always stored separately.
+        cells = [supplied(key) for key, _, _ in COLUMNS]
         issues = []
 
         def issue(code, message, field=None, severity="warning"):
             issues.append({"code": code, "message": message, "field": field, "severity": severity})
 
+        missing_columns = [item['field'] for item in current['pending']]
+        blank_fields = [key for key in positions if key != 'serial' and not supplied(key).strip()]
+        if missing_columns:
+            issue('columns_pending', 'Some fields were not supplied as usable columns. They remain pending / unknown, not confirmed outstanding documents.', severity='info')
+        for ambiguous in current['ambiguous']:
+            issue('column_ambiguous', ambiguous['label']+' has repeated headings; values retained without choosing a column.', ambiguous['field'])
         dates = {}
         for field, col in DATE_FIELDS.items():
-            value, error = parse_date(raw[col])
-            if field == "warehouse" and section_header[20].strip().upper() == "GATE OUT DATE" and raw[col].strip():
-                value, error = None, "Section labels this column as gate-out, not factory arrival."
+            value, error = parse_date(cells[col])
             dates[field] = value
-            if error and raw[col].strip().lower() not in MISSING:
-                issue("date_review", error, field, "info" if field == "exam" and raw[col].strip().upper() == "AEO" else "warning")
+            if error and cells[col].strip().lower() not in MISSING:
+                issue("date_review", error, field, "info" if field == "exam" and cells[col].strip().upper() == "AEO" else "warning")
             if value and report_date and field not in ("eta", "terminal_validity") and value > report_date:
                 issue("after_cutoff", "Reported event is after the selected reporting date.", field)
-        count = int(raw[8].strip()) if raw[8].strip().isdigit() else None
-        size_text = raw[9].strip()
+        unresolved_fields = [key for key in DATE_FIELDS if supplied(key).strip() and not dates[key]]
+        count = int(cells[8].strip()) if cells[8].strip().isdigit() else None
+        size_text = cells[9].strip()
         size_match = re.fullmatch(r"(\d+)\s*[xX×]\s*(20|40|45)", size_text)
         size = size_match[2] if size_match else size_text if size_text in ("20", "40", "45") else None
         if size_match:
@@ -118,7 +208,7 @@ def preview_csv(content, report_date=None):
                 count = parsed_count
         if not count or not size:
             issue("container_review", "Container count or size is missing or ambiguous.", "containers")
-        if not raw[22].strip():
+        if not cells[22].strip():
             issue("handler_missing", "No file handler is recorded.", "handler")
         for earlier, later in (("pre_alert", "warehouse"), ("berth", "gate_out"),
                                ("do", "tdo"), ("tdo", "gate_out"),
@@ -130,7 +220,7 @@ def preview_csv(content, report_date=None):
                 for prerequisite in prerequisites:
                     if not dates[prerequisite]:
                         issue("release_gap", f"{event.replace('_',' ').title()} is reported without a dated {prerequisite.replace('_',' ')}.", event)
-        comment = raw[21].strip()
+        comment = cells[21].strip()
         partial = bool(re.search(r"\b(ongoing|awaiting offloading|offloading ongoing|bal\b|balance|remaining|pending.*container)", comment, re.I))
         if partial:
             issue("partial_delivery", "Comment suggests movement or offloading is incomplete; confirm quantities.", "warehouse")
@@ -148,26 +238,34 @@ def preview_csv(content, report_date=None):
         if re.search(r"awaiting.*release", comment, re.I) and (dates["customs_release"] or dates["do"]):
             issue("comment_conflict", "The comment says awaiting release but release dates are populated.", "comments")
         for col in range(27, 34):
-            val = raw[col].strip()
+            val = cells[col].strip()
             if val and not re.fullmatch(r"-?[\d,]+(?:\.\d+)?", val):
                 issue("finance_type", "A financial column contains non-numeric text; no financial total is calculated.", f"column_{col+1}")
                 break
-        records.append({"source_row": number, "section": section, "serial": label,
-                        "bl": raw[3].strip(), "description": raw[2].strip(), "terminal": raw[4].strip(),
-                        "liner": raw[5].strip(), "handler": raw[22].strip(), "sgd": raw[13].strip(),
+        records.append({"source_row": number, "section": section, "serial": serial,
+                        "bl": cells[3].strip(), "description": cells[2].strip(), "terminal": cells[4].strip(),
+                        "liner": cells[5].strip(), "handler": cells[22].strip(), "sgd": cells[13].strip(),
                         "container_count": count, "container_size": size, "container_raw": size_text,
                         "pending_count": None, "dates": dates, "comments": comment,
                         "proposed_state": state, "state_note": state_note, "issues": issues,
-                        "raw": raw, "evidence": "Historical report · not independently verified"})
+                        "raw": raw, "source_headers": section_header,
+                        "field_mapping": current['mapped'], "missing_columns": missing_columns,
+                        "blank_fields": blank_fields, "unresolved_fields": unresolved_fields,
+                        "pending_fields": list(dict.fromkeys(missing_columns + blank_fields + unresolved_fields)),
+                        "evidence": "Historical report · not independently verified"})
+    if not mappings:
+        raise ValueError("No recognized Bill of Lading heading found. Include BL, BOL NO or Bill of Lading; other columns are optional.")
     if not records:
-        raise ValueError("No shipment rows were found in this report.")
+        raise ValueError("No shipment rows with a Bill of Lading value were found in this report.")
     bls = Counter(r["bl"].upper() for r in records)
     for record in records:
         if bls[record["bl"].upper()] > 1:
             record["issues"].append({"code": "duplicate_bl", "severity": "warning", "field": "bl",
                                      "message": "BL repeats in this source. Keep records separate pending review."})
     summary = {"shipments": len(records), "unique_bls": len(bls), "duplicate_groups": sum(v > 1 for v in bls.values()),
-               "physical_rows": len(rows), "excluded": dict(excluded), "states": dict(Counter(r["proposed_state"] for r in records)),
+               "physical_rows": len(rows), "excluded": dict(excluded),
+               "column_mappings": [{k: v for k, v in mapping.items() if k != 'positions'} for mapping in mappings],
+               "field_labels": LABELS, "skipped_rows": skipped_rows, "states": dict(Counter(r["proposed_state"] for r in records)),
                "rows_with_issues": sum(any(i["severity"] == "warning" for i in r["issues"]) for r in records),
                "warning_count": sum(i["severity"] == "warning" for r in records for i in r["issues"])}
     return records, summary
@@ -224,7 +322,7 @@ def stage(app, client_id, filename, content, report_date, ApiError):
                 raise ApiError(409, "This source already has a preview with a different reporting date.")
             return existing["id"], True
         con.execute("""INSERT INTO batches(id,client_id,filename,sha256,report_date,created_at,summary,mapping)
-            VALUES(?,?,?,?,?,?,?,?)""", (batch_id, client_id, filename, sha, report_date, time.time(), encode(summary), "gzi-v1"))
+            VALUES(?,?,?,?,?,?,?,?)""", (batch_id, client_id, filename, sha, report_date, time.time(), encode(summary), "gzi-header-v2"))
         con.executemany("INSERT INTO import_rows VALUES(?,?,?,?)",
                         ((batch_id, r["source_row"], encode(r["raw"]), encode(r)) for r in records))
         app.store.audit(con, "import_preview_created", {"batch_id": batch_id, "sha256": sha, "rows": len(records)})

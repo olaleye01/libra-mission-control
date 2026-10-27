@@ -90,20 +90,100 @@ class MappingTests(unittest.TestCase):
 
     def test_unknown_headers_rejected(self):
         with self.assertRaises(ValueError):
-            preview_csv(b'BL,ETA\nABC,2026-10-10')
+            preview_csv(b'Cargo,ETA\nABC,2026-10-10')
 
-    def test_malformed_repeated_header_is_a_clear_import_error(self):
-        content = report({}) + b'S/N,BOL NO\n'
-        with self.assertRaisesRegex(ValueError, 'Column header'):
-            preview_csv(content)
+    def test_repeated_headers_can_supply_fewer_columns(self):
+        content = report({}) + b'S/N,BOL NO,ASS. DATE\n2,SMALL-SECOND,2026-10-10\n'
+        records, summary = preview_csv(content)
+        self.assertEqual(len(records),2)
+        self.assertEqual(records[1]['bl'],'SMALL-SECOND')
+        self.assertEqual(records[1]['dates']['assessment'],'2026-10-10')
+        self.assertIn('eta',records[1]['missing_columns'])
+        self.assertEqual(len(summary['column_mappings']),2)
 
     def test_count_conflict_not_silently_repaired(self):
         rows, _ = preview_csv(report({8: '4', 9: '3x40'}))
         self.assertEqual(rows[0]['container_count'], 4)
         self.assertIn('count_conflict', {i['code'] for i in rows[0]['issues']})
 
+    def test_reordered_subset_without_serial_maps_by_heading(self):
+        content=b'ETA,Bill of Lading,Container count,Customs Release,Delivery Order,Terminal Delivery Order\n2026-10-10,SMALL-BL,3,2026-10-12,2026-10-11,2026-10-12\n'
+        records, summary=preview_csv(content)
+        r=records[0]
+        self.assertEqual(r['bl'],'SMALL-BL')
+        self.assertEqual(r['container_count'],3)
+        self.assertEqual(r['dates']['eta'],'2026-10-10')
+        self.assertEqual(r['dates']['customs_release'],'2026-10-12')
+        self.assertIn('ecd',r['pending_fields'])
+        self.assertIsNone(r['dates']['ecd'])
+        self.assertEqual(r['raw'],['2026-10-10','SMALL-BL','3','2026-10-12','2026-10-11','2026-10-12'])
+        self.assertEqual(r['source_headers'][0],'ETA')
+        self.assertEqual(summary['shipments'],1)
 
-class ApiTests(unittest.TestCase):
+    def test_bl_only_is_sufficient_and_other_values_stay_unknown(self):
+        records,_=preview_csv(b'BL\nONLY-IDENTIFIER\n')
+        r=records[0]
+        self.assertEqual(r['bl'],'ONLY-IDENTIFIER')
+        self.assertIsNone(r['container_count'])
+        self.assertIsNone(r['dates']['berth'])
+        self.assertIsNone(r['pending_count'])
+        self.assertEqual(r['proposed_state'],'Awaiting arrival')
+        self.assertIn('assessment',r['missing_columns'])
+
+    def test_absent_blank_placeholder_and_ambiguous_date_remain_distinct(self):
+        records,_=preview_csv(b'BL,PAAR,OBL,Assessment Date\nVALUES,,nil,AEO\n')
+        r=records[0]
+        self.assertIn('ecd',r['missing_columns'])
+        self.assertIn('paar',r['blank_fields'])
+        self.assertNotIn('obl',r['blank_fields'])
+        self.assertIn('obl',r['unresolved_fields'])
+        self.assertIn('assessment',r['unresolved_fields'])
+        self.assertEqual(r['raw'][2],'nil')
+
+    def test_duplicate_gate_out_headers_are_not_warehouse_or_arbitrarily_selected(self):
+        records,summary=preview_csv(b'BL,GATE OUT DATE,GATE OUT DATE\nDUPLICATE-HEADING,2026-10-10,2026-10-11\n')
+        r=records[0]
+        self.assertIsNone(r['dates']['gate_out'])
+        self.assertIsNone(r['dates']['warehouse'])
+        self.assertEqual(summary['column_mappings'][0]['ambiguous'][0]['columns'],[2,3])
+        self.assertIn('column_ambiguous',{i['code'] for i in r['issues']})
+        self.assertEqual(r['raw'][1:],["2026-10-10","2026-10-11"])
+
+    def test_heading_words_in_data_do_not_reset_mapping(self):
+        records,summary=preview_csv(b'BL,COMMENTS\nFIRST,BL\nSECOND,received\n')
+        self.assertEqual([r['bl'] for r in records],['FIRST','SECOND'])
+        self.assertEqual(len(summary['column_mappings']),1)
+        records,summary=preview_csv(b'S/N,BL,COMMENTS\n1,FIRST,BL\n2,SECOND,ETA\n')
+        self.assertEqual(len(records),2)
+        self.assertEqual(len(summary['column_mappings']),1)
+
+    def test_duplicate_identity_headers_need_a_unique_choice(self):
+        with self.assertRaisesRegex(ValueError,'Bill of Lading heading repeats'):
+            preview_csv(b'BL,BOL NO\nFIRST,SECOND\n')
+
+    def test_short_rows_and_extra_unknown_cells_are_preserved(self):
+        records,summary=preview_csv(b'BL,ETA,Unknown provider note\nSHORT\nEXTRA,2026-10-10,note,extra-cell\n')
+        self.assertIsNone(records[0]['dates']['eta'])
+        self.assertIn('eta',records[0]['blank_fields'])
+        self.assertEqual(records[0]['raw'],['SHORT'])
+        self.assertEqual(records[1]['raw'][-1],'extra-cell')
+        self.assertEqual(summary['column_mappings'][0]['unmapped'][0]['header'],'Unknown provider note')
+
+    def test_known_reduced_report_accepts_five_records_and_preserves_headers(self):
+        source=SOURCE.parent/'GZI-REPORT-26-10-26 (3).csv'
+        if not source.exists():
+            self.skipTest('Private reduced report not supplied')
+        records,summary=preview_csv(source.read_bytes())
+        self.assertEqual(len(records),5)
+        self.assertEqual(summary['physical_rows'],10)
+        self.assertTrue(all(len(r['raw'])==27 for r in records))
+        self.assertEqual(len(summary['column_mappings']),2)
+        self.assertIn('terminal_validity',records[0]['missing_columns'])
+        self.assertTrue(any(r['source_headers'][12]=='ASS. DATE' for r in records))
+        self.assertNotIn('Completed',summary['states'])
+
+
+class HttpFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.sources = Path(self.temp.name) / 'sources'
@@ -148,6 +228,8 @@ class ApiTests(unittest.TestCase):
         return self.call('POST', '/api/imports/preview', {'client_id': 1, 'filename': 'test.csv',
             'content_base64': base64.b64encode(content or report({26: '10-Oct-26'})).decode()})
 
+
+class ApiTests(HttpFixture):
     def test_authentication_csrf_and_cross_origin(self):
         self.assertEqual(self.call('GET', '/api/shipments')[0], 401)
         self.owner()
@@ -212,6 +294,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status,409)
         batch = self.call('GET','/api/imports/'+first)[1]['batch']
         self.assertIsNone(batch['report_date'])
+
+    def test_optional_column_preview_apply_retains_actual_source_and_unknown_fields(self):
+        self.owner()
+        content=b'Bill of Lading,ETA,Unexpected note\nMINIMAL-JOB,2026-10-10,keep exactly\n'
+        status,result,_=self.preview(content)
+        self.assertEqual(status,200,result)
+        batch=result['batch']['id']
+        self.assertEqual(result['batch']['mapping'],'gzi-header-v2')
+        self.assertEqual(self.call('GET','/api/shipments')[1]['total'],0)
+        self.assertEqual(self.call('POST',f'/api/imports/{batch}/apply',{'confirm_test_import':True})[0],200)
+        record=self.call('GET','/api/shipments')[1]['shipments'][0]
+        detail=self.call('GET',f"/api/shipments/{record['id']}")[1]['shipment']
+        self.assertEqual(detail['source_snapshot']['source_headers'],['Bill of Lading','ETA','Unexpected note'])
+        self.assertEqual(detail['raw'],['MINIMAL-JOB','2026-10-10','keep exactly'])
+        self.assertIn('ecd',detail['pending_fields'])
+        self.assertIsNone(detail['operation']['dates']['ecd'])
+        self.assertEqual(self.preview(content)[1]['batch']['id'],batch)
 
     def test_logout_revokes_session(self):
         self.owner()

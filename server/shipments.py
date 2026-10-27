@@ -2,28 +2,13 @@ import json
 from collections import Counter
 
 from imports import STATES
+from records import records
+from operations import date
 
 
-def all_records(app, client_id=None):
+def all_records(app, client_id=None, as_of=None):
     with app.store.connect() as con:
-        sql = """SELECT s.id,s.client_id,s.batch_id,s.source_row,c.name AS client_name,
-            b.filename,b.report_date,r.record FROM shipments s
-            JOIN clients c ON c.id=s.client_id JOIN batches b ON b.id=s.batch_id
-            JOIN import_rows r ON r.batch_id=s.batch_id AND r.source_row=s.source_row"""
-        args = ()
-        if client_id:
-            sql += " WHERE s.client_id=?"
-            args = (client_id,)
-        rows = con.execute(sql + " ORDER BY s.created_at DESC,s.source_row DESC", args).fetchall()
-        records = []
-        for row in rows:
-            r = dict(row)
-            r.update(json.loads(r.pop("record")))
-            r["job_id"] = f"LMC-{r['id']:05d}"
-            r["state"] = r["proposed_state"]
-            r["review_status"] = "Historical proposal"
-            records.append(r)
-        return records
+        return records(con, client_id, as_of)
 
 
 def register(route, ApiError):
@@ -44,6 +29,7 @@ def register(route, ApiError):
                 "known_container_total": sum(r["container_count"] or 0 for r in records),
                 "unknown_container_count": sum(not r["container_count"] for r in records),
                 "terminals": dict(terminal_counts.most_common(5)),
+                "action_count": sum(len(r["actions"]) for r in records),
                 "mode": "test", "hermes": "not_connected", "notifications": "disabled"}
 
     @route("GET", "/api/shipments")
@@ -68,7 +54,7 @@ def register(route, ApiError):
             raise ApiError(400, "Page and limit must be integers.")
         total = len(records)
         selected = records[(page-1)*limit:page*limit]
-        return {"shipments": [{k: v for k, v in r.items() if k != "raw"} for r in selected],
+        return {"shipments": [{k: v for k, v in r.items() if k not in ("raw", "source_snapshot", "movements", "operation")} for r in selected],
                 "total": total, "page": page, "limit": limit}
 
     @route("GET", "/api/shipments/<id>")
@@ -82,9 +68,18 @@ def register(route, ApiError):
             raise ApiError(404, "Shipment not found.")
         with req.app.store.connect() as con:
             history = con.execute("SELECT at,actor,action,detail FROM audit ORDER BY id").fetchall()
-        record["history"] = [{"at": r["at"], "actor": r["actor"], "action": r["action"]}
-                             for r in history if json.loads(r["detail"]).get("batch_id") == record["batch_id"]]
+        record["history"] = [{"at": r["at"], "actor": r["actor"], "action": r["action"], "detail": json.loads(r["detail"])}
+                             for r in history if (record["batch_id"] and json.loads(r["detail"]).get("batch_id") == record["batch_id"])
+                             or json.loads(r["detail"]).get("shipment_id") == record["id"]]
         return {"shipment": record}
+
+    @route("GET", "/api/actions")
+    def actions(req, query, body):
+        as_of = date(query.get("as_of"))
+        jobs = all_records(req.app, client_filter(query), as_of)
+        return {"actions": [{**a, "shipment_id": r["id"], "job_id": r["job_id"], "client_name": r["client_name"],
+                             "bl": r["bl"], "historical": not r["operation"]["reconciled"]}
+                            for r in jobs for a in r["actions"]], "notifications": "disabled"}
 
     @route("GET", "/api/audit")
     def audit(req, query, body):
