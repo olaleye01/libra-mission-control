@@ -46,7 +46,7 @@ def register(route, ApiError):
         if state:
             records = [r for r in records if r["state"] == state]
         if search:
-            records = [r for r in records if search in " ".join(str(r[k]) for k in ("job_id", "bl", "description", "terminal", "liner", "field_agent", "import_officer", "sgd", "client_name")).lower()]
+            records = [r for r in records if search in " ".join(str(r[k]) for k in ("job_id", "bl", "description", "terminal", "liner", "field_agent", "import_officer", "delivery_location", "sgd", "client_name")).lower()]
         if query.get("issues") == "1":
             records = [r for r in records if any(i["severity"] == "warning" for i in r["issues"])]
         try:

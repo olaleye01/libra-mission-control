@@ -20,6 +20,7 @@ def normalize(data):
         data['handler'] = data['field_agent']  # Compatibility alias, not a second job role.
         data['import_officer'] = data.get('import_officer') or 'Owner'
         data['ownership_version'] = 1
+    data.setdefault('delivery_location', '')
     data.setdefault('coordination', {})
     for item in data['followups'].values():
         if 'team' not in item:

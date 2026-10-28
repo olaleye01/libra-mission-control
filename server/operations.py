@@ -56,7 +56,7 @@ def patch(data, changes):
     keys(changes, (*TEXT_FIELDS, 'container_count', 'dates', 'reconciled', 'awaiting_duty_receipt', 'approval_by', 'rotation', 'invoices', 'closure', 'completed', 'release_coverage'), 'shipment')
     for key, val in changes.items():
         if key in TEXT_FIELDS or key == 'approval_by':
-            data[key] = text(val, key, 2000 if key == 'description' else 160)
+            data[key] = text(val, key, 2000 if key == 'description' else 500 if key == 'delivery_location' else 160)
         elif key == 'container_count':
             data[key] = count(val, True)
         elif key in ('reconciled', 'awaiting_duty_receipt', 'completed'):
@@ -110,11 +110,8 @@ def patch(data, changes):
     for item in data['invoices'].values():
         if item['payment_date'] and item['payment'] != 'paid':
             raise ApiError(422, 'A payment date requires an explicitly reported paid status.')
-    if data['dates']['draft_approved']:
-        if not data['dates']['draft_received'] or not data['approval_by']:
-            raise ApiError(422, 'Record the actual draft receipt and approver for an approval date.')
-        if data['dates']['draft_approved'] < data['dates']['draft_received']:
-            raise ApiError(422, 'Draft approval cannot precede draft receipt.')
+    if data['dates']['draft_approved'] and not data['approval_by']:
+        raise ApiError(422, 'Record the actual client approver for an approval date.')
 
 
 def validate(record, data, events, exception_reason):
@@ -178,8 +175,57 @@ def update_coordination(data, identifier, fields):
     return identifier
 
 
+def warehouse_balance(data, events, balance, identifier, exception):
+    """A remaining-count entry is a dated movement adjustment, never a second balance."""
+    keys(balance, ('pending_count', 'date', 'supersedes', 'confirm_duplicate'), 'warehouse balance')
+    total = data['container_count']
+    pending = balance.get('pending_count')
+    if total is None:
+        raise ApiError(422, 'Record a starting container total before updating Pending warehouse.')
+    if type(pending) is not int or not 0 <= pending <= total:
+        raise ApiError(400, 'Pending warehouse must be a whole number from zero to the starting total.')
+    if not data['reconciled']:
+        raise ApiError(422, 'Confirm the container total and historical warehouse quantities before updating Pending warehouse.')
+    active = active_events(events)
+    delivered = sum(e['quantity'] for e in active if e['kind'] == 'warehouse')
+    difference = total - pending - delivered
+    supersedes = balance.get('supersedes') or None
+    old = None
+    if supersedes:
+        old = next((e for e in events if e['id'] == supersedes and e['kind'] == 'warehouse'), None)
+        if not old or any(e['supersedes'] == supersedes for e in events):
+            raise ApiError(409, 'Select an unsuperseded warehouse event on this job to correct.')
+    elif difference < 0:
+        raise ApiError(422, 'Increasing Pending warehouse requires correcting a recorded warehouse arrival. Select the event to correct, or use Movements for several corrections.')
+    if difference == 0 and not old:
+        if balance.get('date'):
+            raise ApiError(422, 'The warehouse quantity is unchanged. Select an existing event to correct its date.')
+        return None
+    quantity = old['quantity'] + difference if old else difference
+    if quantity < 0:
+        raise ApiError(422, 'This reduction spans more than the selected arrival. Correct the relevant events in Movements.')
+    event_date = date(balance.get('date'))
+    if not event_date:
+        if old and quantity == 0:
+            event_date = old['date']
+        else:
+            raise ApiError(400, 'Record the actual warehouse arrival date for this quantity change.')
+    if event_date > today():
+        raise ApiError(400, 'An actual warehouse arrival date cannot be in the future.')
+    duplicates = [e for e in active if e['kind'] == 'warehouse' and e['date'] == event_date
+                  and e['quantity'] == quantity and e['id'] != supersedes]
+    if duplicates and balance.get('confirm_duplicate') is not True:
+        raise ApiError(409, 'An identical-looking warehouse arrival exists. Confirm a separate arrival or correct its event.')
+    if difference > 0:
+        enforce_hold(data, 'warehouse', exception)
+    return {'id': uuid.uuid4().hex, 'shipment_id': identifier, 'kind': 'warehouse', 'date': event_date,
+            'quantity': quantity, 'supersedes': supersedes, 'exception_reason': exception, 'created_at': time.time()}
+
+
 def execute(app, operation, body, identifier=None):
-    keys(body, ('command_id', 'revision', 'reason', 'changes', 'client_id', 'duplicate_reason', 'exception_reason', 'kind', 'quantity', 'date', 'supersedes', 'confirm_duplicate', 'key', 'status', 'responsible', 'blocker', 'next_action', 'source', 'team', 'item_id', 'item'), 'command')
+    keys(body, ('command_id', 'revision', 'reason', 'changes', 'client_id', 'duplicate_reason', 'exception_reason', 'kind', 'quantity', 'date', 'supersedes', 'confirm_duplicate', 'key', 'status', 'responsible', 'blocker', 'next_action', 'source', 'team', 'item_id', 'item', 'warehouse_balance'), 'command')
+    if 'warehouse_balance' in body and operation != 'update':
+        raise ApiError(400, 'Warehouse balance belongs to an existing job update.')
     token = text(body.get('command_id', ''), 'Command ID', 100)
     if not re.fullmatch(r'[A-Za-z0-9_-]{16,100}', token):
         raise ApiError(400, 'A unique command_id of 16–100 safe characters is required.')
@@ -196,6 +242,7 @@ def execute(app, operation, body, identifier=None):
                 raise ApiError(409, 'Command ID already used with different content.')
             return json.loads(previous['response'])
         all_jobs = records(con)
+        event = None
         if operation == 'create':
             client_id = body.get('client_id')
             if type(client_id) is not int or not con.execute('SELECT 1 FROM clients WHERE id=?', (client_id,)).fetchone():
@@ -220,6 +267,10 @@ def execute(app, operation, body, identifier=None):
                 patch(data, body.get('changes', {}))
                 if data['dates']['tdo'] and data['dates']['tdo'] != before['dates']['tdo']:
                     enforce_hold(data, 'tdo', exception)
+                if 'warehouse_balance' in body:
+                    event = warehouse_balance(data, events, body['warehouse_balance'], identifier, exception)
+                    if event:
+                        events.append(event)
                 validate(record, data, events, exception)
             elif operation == 'movement':
                 kind = choice(body.get('kind'), ('gate_out', 'warehouse'), 'movement type')
@@ -247,7 +298,6 @@ def execute(app, operation, body, identifier=None):
                          'supersedes': supersedes, 'exception_reason': exception, 'created_at': time.time()}
                 events.append(event)
                 validate(record, data, events, exception)
-                con.execute('INSERT INTO movements VALUES(?,?,?,?,?,?,?,?)', tuple(event[k] for k in ('id', 'shipment_id', 'kind', 'quantity', 'date', 'supersedes', 'exception_reason', 'created_at')))
             elif operation == 'followup':
                 key = choice(body.get('key'), ACTION_KEYS, 'follow-up')
                 status = choice(body.get('status'), ('open', 'in_progress', 'awaiting_response'), 'follow-up status')
@@ -258,6 +308,8 @@ def execute(app, operation, body, identifier=None):
                 update_coordination(data, body.get('item_id'), body.get('item', {}))
                 if data['completed'] and holds(data, 'completion'):
                     raise ApiError(422, 'Unmark Completed before adding an unresolved completion hold.')
+        if event:
+            con.execute('INSERT INTO movements VALUES(?,?,?,?,?,?,?,?)', tuple(event[k] for k in ('id', 'shipment_id', 'kind', 'quantity', 'date', 'supersedes', 'exception_reason', 'created_at')))
         # BL is a lookup aid, never a merge key. Explicit acknowledgement keeps separate jobs.
         duplicates = [r for r in all_jobs if r['id'] != identifier and r['client_id'] == record['client_id'] and r['bl'].casefold() == data['bl'].casefold()]
         if duplicates and (operation == 'create' or (before and before['bl'] != data['bl'])) and not text(body.get('duplicate_reason', ''), 'Duplicate BL reason'):
@@ -265,7 +317,7 @@ def execute(app, operation, body, identifier=None):
         con.execute('INSERT INTO job_updates VALUES(?,?,?) ON CONFLICT(shipment_id) DO UPDATE SET revision=excluded.revision,data=excluded.data', (identifier, revision+1, encode(data)))
         app.store.audit(con, 'shipment_'+operation, {'shipment_id': identifier, 'reason': reason, 'exception_reason': exception,
                          'duplicate_reason': body.get('duplicate_reason', ''), 'before': before, 'after': data,
-                         'event': events[-1] if operation == 'movement' else None, 'revision': revision+1})
+                         'event': event, 'warehouse_balance': body.get('warehouse_balance'), 'revision': revision+1})
         result = {'shipment': next(r for r in records(con) if r['id'] == identifier)}
         con.execute('INSERT INTO commands VALUES(?,?,?)', (token, fingerprint, encode(result)))
         return result

@@ -31,19 +31,60 @@ class CoordinationTests(HttpFixture):
     def fetch(self, job):
         return self.call('GET',f"/api/shipments/{job['id']}")[1]['shipment']
 
+    def test_delivery_location_create_update_clear_and_audit(self):
+        job=self.create(delivery_location='Client warehouse, Example Road, Lagos')
+        self.assertEqual(job['delivery_location'],'Client warehouse, Example Road, Lagos')
+        self.assertEqual(job['state'],'Awaiting arrival')
+        self.assertEqual(job['pending_count'],4)
+        self.assertEqual(job['movements'],[])
+        job=self.save(job,'update',changes={'delivery_location':'Revised warehouse, Example Estate'})
+        history=self.fetch(job)['history'][-1]['detail']
+        self.assertEqual(history['before']['delivery_location'],'Client warehouse, Example Road, Lagos')
+        self.assertEqual(history['after']['delivery_location'],'Revised warehouse, Example Estate')
+        self.assertEqual(self.call('GET','/api/shipments?search=Revised%20warehouse')[1]['total'],1)
+        self.assertEqual(self.fetch(job)['operation']['delivery_location'],'Revised warehouse, Example Estate')
+        self.save(job,'update',400,changes={'delivery_location':'x'*501})
+        self.save(job,'update',400,changes={'delivery_location':None})
+        self.assertEqual(self.fetch(job)['delivery_location'],'Revised warehouse, Example Estate')
+        job=self.save(job,'update',changes={'delivery_location':''})
+        self.assertEqual(self.fetch(job)['delivery_location'],'')
+        self.assertIsNone(job['dates']['warehouse'])
+
+    def test_legacy_location_is_unknown_without_writing_or_changing_imports(self):
+        batch=self.preview(report({22:'Source agent'}))[1]['batch']['id']
+        self.call('POST','/api/imports/'+batch+'/apply',{'confirm_test_import':True})
+        job=self.fetch(self.call('GET','/api/shipments')[1]['shipments'][0])
+        source=copy.deepcopy(job['source_snapshot'])
+        self.assertEqual(job['delivery_location'],'')
+        job=self.save(job,'update',changes={'delivery_location':'Owner-supplied warehouse'})
+        self.assertEqual(job['source_snapshot'],source)
+        legacy=copy.deepcopy(job['operation']);legacy.pop('delivery_location')
+        raw=json.dumps(legacy)
+        with self.httpd.app.store.connect() as con:
+            con.execute('UPDATE job_updates SET data=? WHERE shipment_id=?',(raw,job['id']))
+        restored=self.fetch(job)
+        self.assertEqual(restored['delivery_location'],'')
+        self.assertEqual(restored['source_snapshot'],source)
+        with self.httpd.app.store.connect() as con:
+            self.assertEqual(con.execute('SELECT data FROM job_updates WHERE shipment_id=?',(job['id'],)).fetchone()[0],raw)
+        from server import Application
+        from shipments import all_records
+        app=Application(self.httpd.app.store.directory,self.sources)
+        self.assertEqual(all_records(app)[0]['delivery_location'],'')
+
     def test_handler_alias_is_field_agent_and_owner_coordinates_by_default(self):
         job=self.create(handler='Agent A',dates={'paar':'2024-06-01'})
         self.assertEqual(job['field_agent'],'Agent A')
         self.assertEqual(job['handler'],'Agent A')
         self.assertEqual(job['import_officer'],'Owner')
-        draft=next(a for a in job['actions'] if a['key']=='draft')
+        draft=next(a for a in job['actions'] if a['key']=='draft_approval')
         self.assertEqual(draft['responsible'],'Owner')
         self.assertEqual(draft['team'],'import_officer')
         self.assertEqual(draft['reminder_recipient'],'Owner')
         job=self.save(job,'update',changes={'field_agent':'Agent B','import_officer':'Officer C'})
         self.assertEqual(job['handler'],'Agent B')
         self.assertEqual(job['field_agent'],'Agent B')
-        self.assertEqual(next(a['responsible'] for a in job['actions'] if a['key']=='draft'),'Officer C')
+        self.assertEqual(next(a['responsible'] for a in job['actions'] if a['key']=='draft_approval'),'Officer C')
         self.save(job,'update',422,changes={'handler':'Different','field_agent':'Conflict'})
         job=self.save(job,'update',changes={'field_agent':''})
         self.assertEqual(self.fetch(job)['field_agent'],'')
@@ -72,7 +113,7 @@ class CoordinationTests(HttpFixture):
             legacy.pop(key,None)
         legacy['handler']='Earlier handler'
         legacy['field_agent']='Explicit agent'
-        legacy['followups']={'draft':{'status':'awaiting_response','at':1,'responsible':'Earlier assignee','blocker':'','next_action':'','source':'Old entry'}}
+        legacy['followups']={'draft_approval':{'status':'awaiting_response','at':1,'responsible':'Earlier assignee','blocker':'','next_action':'','source':'Old entry'}}
         legacy['dates']['paar']='2024-06-01'
         raw=json.dumps(legacy)
         with self.httpd.app.store.connect() as con:
@@ -81,7 +122,7 @@ class CoordinationTests(HttpFixture):
         self.assertEqual(loaded['field_agent'],'Explicit agent')
         self.assertEqual(loaded['operation']['legacy_handler'],'Earlier handler')
         self.assertIn('ownership_review',{i['code'] for i in loaded['issues']})
-        draft=next(a for a in loaded['actions'] if a['key']=='draft')
+        draft=next(a for a in loaded['actions'] if a['key']=='draft_approval')
         self.assertEqual(draft['responsible'],'Earlier assignee')
         self.assertEqual(draft['team'],'unassigned')
         self.assertTrue(draft['assignment_review'])
@@ -93,21 +134,21 @@ class CoordinationTests(HttpFixture):
 
     def test_assignment_and_reminder_recipient_are_independent(self):
         job=self.create(field_agent='Agent A',dates={'paar':'2024-06-01'})
-        job=self.save(job,'followups',key='draft',team='field_agent',status='awaiting_response',source='Owner request')
-        draft=next(a for a in job['actions'] if a['key']=='draft')
+        job=self.save(job,'followups',key='draft_approval',team='field_agent',status='awaiting_response',source='Owner request')
+        draft=next(a for a in job['actions'] if a['key']=='draft_approval')
         self.assertEqual(draft['responsible'],'Agent A')
         self.assertEqual(draft['reminder_recipient'],'Owner')
         self.assertIn('awaiting_response',draft['queues'])
         self.assertNotIn('my_next',draft['queues'])
         self.assertIsNone(job['dates']['draft_received'])
-        job=self.save(job,'followups',key='draft',team='accounts',status='in_progress',responsible='Account staff',source='Owner assigned review')
-        self.assertEqual(next(a['responsible'] for a in job['actions'] if a['key']=='draft'),'Account staff')
-        job=self.save(job,'followups',key='draft',team='regulatory',status='open')
-        self.assertEqual(next(a['responsible'] for a in job['actions'] if a['key']=='draft'),'Unassigned')
+        job=self.save(job,'followups',key='draft_approval',team='accounts',status='in_progress',responsible='Account staff',source='Owner assigned review')
+        self.assertEqual(next(a['responsible'] for a in job['actions'] if a['key']=='draft_approval'),'Account staff')
+        job=self.save(job,'followups',key='draft_approval',team='regulatory',status='open')
+        self.assertEqual(next(a['responsible'] for a in job['actions'] if a['key']=='draft_approval'),'Unassigned')
         self.assertEqual(self.call('GET','/api/actions?team=regulatory')[1]['actions'][0]['reminder_recipient'],'Owner')
         job=self.save(job,'update',changes={'dates':{'assessment':'2024-06-02'},'sgd':'C-42'})
-        self.assertNotIn('draft',{a['key'] for a in job['actions']})
-        self.assertIn('draft',job['operation']['followups'])
+        self.assertNotIn('draft_approval',{a['key'] for a in job['actions']})
+        self.assertIn('draft_approval',job['operation']['followups'])
 
     def test_regulatory_items_are_manual_and_do_not_create_authority_requirements(self):
         job=self.create()

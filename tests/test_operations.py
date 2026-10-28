@@ -80,12 +80,12 @@ class OperationalTests(HttpFixture):
 
     def test_final_assessment_pair_clears_requirements_without_fabricating_history(self):
         job = self.create(dates={'paar': '2024-06-01'})
-        self.assertIn('draft', {a['key'] for a in job['actions']})
+        self.assertIn('draft_approval', {a['key'] for a in job['actions']})
         job = self.update(job, {'dates': {'assessment': '2024-06-02'}})
         self.assertFalse(job['assessment']['draft_requirements_cleared'])
         job = self.update(job, {'sgd': 'C-REFERENCE/42'})
         self.assertTrue(job['assessment']['draft_requirements_cleared'])
-        self.assertNotIn('draft', {a['key'] for a in job['actions']})
+        self.assertNotIn('draft_approval', {a['key'] for a in job['actions']})
         self.assertIn('duty_receipt', {a['key'] for a in job['actions']})
         self.assertIsNone(job['dates']['draft_approved'])
         self.assertEqual(job['assessment']['approval_by'], '')
@@ -98,6 +98,40 @@ class OperationalTests(HttpFixture):
         self.assertIsNone(job['dates']['assessment'])
         self.assertIn('assessment_completeness', {i['code'] for i in job['issues']})
         self.assertIn('duty_receipt', {a['key'] for a in job['actions']})
+
+    def test_client_approval_proceeds_without_a_draft_receipt_date(self):
+        job = self.create(dates={'paar': '2024-06-01'})
+        self.assertEqual({a['key'] for a in job['actions']}, {'draft_approval'})
+        self.update(job, {'dates': {'draft_approved': '2024-06-02'}}, 422)
+        self.assertEqual(self.detail(job)['revision'], job['revision'])
+        job = self.update(job, {'dates': {'draft_approved': '2024-06-02'}, 'approval_by': 'Client representative'})
+        self.assertIsNone(job['dates']['draft_received'])
+        self.assertEqual({a['key'] for a in job['actions']}, {'final_assessment'})
+        job = self.update(job, {'dates': {'assessment': '2024-06-03'}, 'sgd': 'C-APPROVED'})
+        self.assertEqual({a['key'] for a in job['actions']}, {'duty_receipt'})
+        self.assertEqual(job['assessment']['approval_date'], '2024-06-02')
+        self.assertEqual(job['assessment']['approval_by'], 'Client representative')
+        self.assertIsNone(job['dates']['draft_received'])
+
+    def test_legacy_draft_receipt_and_tasks_are_retained_without_becoming_approval(self):
+        job = self.create(dates={'paar': '2024-06-01', 'draft_received': '2024-06-04'})
+        status, result, _ = self.call('POST', f"/api/shipments/{job['id']}/followups", {
+            'command_id': uuid.uuid4().hex, 'revision': job['revision'], 'reason': 'Earlier draft task',
+            'key': 'draft', 'status': 'awaiting_response', 'responsible': 'Earlier assignee', 'source': 'Earlier entry'})
+        self.assertEqual(status, 200, result)
+        job = self.detail(result['shipment'])
+        self.assertEqual(job['operation']['followups']['draft']['status'], 'awaiting_response')
+        self.assertEqual(job['dates']['draft_received'], '2024-06-04')
+        approval = next(a for a in job['actions'] if a['key'] == 'draft_approval')
+        self.assertEqual(approval['status'], 'open')
+        self.assertIsNone(job['assessment']['approval_date'])
+        # An obsolete draft-receipt entry must not block an independently recorded approval.
+        job = self.update(job, {'dates': {'draft_approved': '2024-06-02'}, 'approval_by': 'Client representative'})
+        self.assertEqual(job['dates']['draft_received'], '2024-06-04')
+        self.assertEqual({a['key'] for a in job['actions']}, {'final_assessment'})
+        detail = self.detail(job)
+        self.assertEqual(detail['operation']['followups']['draft']['responsible'], 'Earlier assignee')
+        self.assertEqual(detail['history'][-1]['detail']['before']['dates']['draft_received'], '2024-06-04')
 
     def test_nil_blank_unpaid_combined_and_rating_are_distinct(self):
         job = self.create(dates={'duty_receipt': '2024-06-01', 'eta': '2024-06-12'})

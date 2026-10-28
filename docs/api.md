@@ -68,9 +68,9 @@ All POST actions below require owner session + CSRF, a unique safe `command_id` 
 | POST /api/shipments/{id}/followups | Record owner action / awaiting-response metadata; sends nothing |
 | GET /api/actions | Calculated internal queue, with optional `client_id` and ISO `as_of` filters |
 
-`changes` accepts `bl`, `description`, `terminal`, `liner`, `handler` (legacy alias), `field_agent`, `import_officer`, `sgd` (C Number/SDG alias), `container_size`, `container_count` (integer 1–100000 or null), `approval_by`, `dates`, `reconciled`, `awaiting_duty_receipt`, `rotation`, `release_coverage`, `invoices`, `closure`, `completed`. Unknown fields are rejected. Empty dates normalize to null; all others must be valid ISO YYYY-MM-DD. All choices start unknown when absent. Client cannot be changed through this update endpoint.
+`changes` accepts `bl`, `description`, `terminal`, `liner`, `handler` (legacy alias), `field_agent`, `import_officer`, `sgd` (C Number/SDG alias), `container_size`, `delivery_location` (optional text, maximum 500 characters), `container_count` (integer 1–100000 or null), `approval_by`, `dates`, `reconciled`, `awaiting_duty_receipt`, `rotation`, `release_coverage`, `invoices`, `closure`, `completed`. Unknown fields are rejected. Empty dates normalize to null; all others must be valid ISO YYYY-MM-DD. All choices start unknown when absent. Client cannot be changed through this update endpoint.
 
-- `dates`: first-slice date keys except gate_out/warehouse, plus `draft_received`, `draft_approved`, `client_invoiced`. Gate-out/warehouse dates are derived from movement events once reconciled. Actual draft approval needs draft receipt and an approver, and cannot predate receipt. Final assessment date plus non-empty `sgd` clears requirements without changing approval history.
+- `dates`: first-slice date keys except gate_out/warehouse, plus `draft_approved` (client approval to proceed) and `client_invoiced`. `draft_received` is retained only for compatibility with earlier entries and is not shown or required by the dashboard. Gate-out/warehouse dates are derived from movement events once reconciled. The dashboard temporarily omits both the client approval date and approver from its form and update payload, preserving earlier values. These fields remain supported by the API; an explicitly supplied approval date requires an approver but no draft receipt date. Once PAAR is recorded, the approval follow-up leads to final-assessment follow-up after approval; no separate draft-receipt task is generated. Legacy `draft` follow-up entries remain stored as history and are not treated as evidence of client approval. Final assessment date plus non-empty `sgd` clears requirements without changing approval history.
 - `rotation`: `{status:unknown|not_requested|gotten, number:text}`; `not_requested` represents explicit nil.
 - `release_coverage`: `{do:count|null, tdo:count|null, customs_release:count|null}`. Counts are cumulative owner-confirmed coverage for the same job; dates alone do not establish scope. Individual container identities are deferred.
 - `invoices`: keys `shipping`, `additional`, `terminal`; each has `{request:unknown|not_requested|requested, received:date|null, payment:unknown|not_paid|paid, payment_date:date|null, rated_through:date|null, coverage, applicability:unknown|required|not_applicable, reason:text}`. Coverage is the matching key or `combined` for shipping/terminal. Payment date requires an explicit paid report. A receipt date does not set paid. These are separate factual fields, not a finalized requested/unpaid invoice status vocabulary. No amount/currency/due date is inferred.
@@ -87,6 +87,26 @@ A follow-up body has `{key, status:open|in_progress|awaiting_response, team, res
 Action objects include key, next_action, status, responsible, blocker, source, last_action_at and as_of; `/api/actions` adds client_name, bl, job_id, shipment_id and historical. Historical jobs use their report cut-off, or no age calculation if unknown; reconciled jobs use today's Africa/Lagos date. `as_of` overrides calculations for review only and never sends or reschedules anything. ECD dates from split delivery require an agreed anchor. Rating-expiry and twice-weekly closure schedules are not implemented.
 
 Operational storage is separate from `import_rows`: `job_updates` holds versioned current facts, `movements` is append-only, `commands` supplies idempotency and `audit` records actor/reason/before/after/revision and movement payload. `source_snapshot` and import preview records remain byte-for-byte equivalent in meaning/content after edits. Schema upgrades preserve v1 IDs, sources and owner sessions and create a private SQLite backup first.
+
+## Delivery location
+
+`delivery_location` is an optional job-level destination/warehouse address, accepted in `changes` for create/update and returned in the shipment list, detail and `operation`. It accepts at most 500 text characters; empty text clears it. Older stored operations and historical imports expose an empty/unknown destination without rewriting their stored source data. Updates use the existing revision/idempotency controls and record before/after values in audit history. Shipment search includes the delivery location. Recording or changing a location does not establish warehouse arrival, change quantities or advance the lifecycle.
+
+## Pending warehouse entry from Update job
+
+The dashboard temporarily hides the warehouse balance controls and reconciliation checkbox. Ordinary form saves omit these fields, preserving existing quantities and reconciliation status. The API below remains supported.
+
+`POST /api/shipments/{id}/update` also accepts an optional top-level `warehouse_balance` object:
+
+```json
+{"pending_count": 2, "date": "2024-06-05", "supersedes": null, "confirm_duplicate": false}
+```
+
+This is a convenience input for the movement ledger, not a freely editable persisted balance. After validated `changes` are applied, the backend calculates target delivered = saved starting total minus pending_count, and compares it with active warehouse-event quantities. A positive difference appends a warehouse arrival for exactly that difference. Decreasing delivered quantities requires selecting an unsuperseded warehouse event on the same job with `supersedes`; only that event's quantity is adjusted through an append-only replacement. A reduction spanning several events must use the Movements correction controls. A zero replacement cancels the selected event and can retain its original date if no new date is supplied.
+
+The total must be known, pending_count must be an integer from zero through that total, and quantity reconciliation must be explicitly confirmed with `changes.reconciled:true` for unreconciled jobs. New arrivals and nonzero corrections require actual, non-future dates. An unchanged balance creates no event; changing only its date requires selecting an existing event. Duplicate-looking arrivals need explicit confirmation. Release/gate-out count checks, owner-selected warehouse holds, completion gates, revision checks and idempotency remain enforced. Observed-fact exceptions can retain reported arrivals with missing evidence, but cannot fabricate gate-outs or bypass completion requirements.
+
+`warehouse_balance` is allowed only on an existing job update. Direct `changes.pending_count` remains invalid. Job fields, movement insertion, audit record and command result commit together or all roll back. Audit includes the requested balance and any created/corrected movement; original imports remain unchanged. Leaving the input empty on an unreconciled job does not establish a zero delivery count or a delivery date.
 
 ## Ownership and coordination (slice 2.1)
 

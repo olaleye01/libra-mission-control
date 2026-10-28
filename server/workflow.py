@@ -9,7 +9,8 @@ from coordination import normalize, action, holds
 
 INVOICE_KEYS = ('shipping', 'additional', 'terminal')
 CLOSURE_KEYS = ('empty_returns', 'shipping_final')
-TEXT_FIELDS = ('bl', 'description', 'terminal', 'liner', 'handler', 'field_agent', 'import_officer', 'sgd', 'container_size')
+TEXT_FIELDS = ('bl', 'description', 'terminal', 'liner', 'handler', 'field_agent', 'import_officer', 'sgd', 'container_size', 'delivery_location')
+# draft_received remains a legacy date so older entries and audit history survive.
 DATE_KEYS = tuple(k for k in DATE_FIELDS if k not in ('gate_out', 'warehouse')) + ('draft_received', 'draft_approved', 'client_invoiced')
 ACTION_KEYS = ('shipping_invoice', 'rotation', 'paar', 'obl', 'draft', 'draft_approval', 'final_assessment', 'assessment_details', 'duty_receipt', 'terminal_invoice', 'tdo_age', 'ecd', 'closure', 'reported_blocker', 'additional_invoice', 'shipping_payment', 'additional_payment', 'terminal_payment', 'delivery_progress')
 
@@ -162,10 +163,8 @@ def actions(r, data, as_of):
                 add(key, 'Confirm / obtain '+key.upper())
     pair = r['assessment']['draft_requirements_cleared']
     if d['paar'] and not pair:
-        if not d['draft_received']:
-            add('draft', 'Obtain draft assessment')
-        elif not d['draft_approved']:
-            add('draft_approval', 'Obtain client approval of draft assessment')
+        if not d['draft_approved']:
+            add('draft_approval', 'Obtain client approval to proceed with final assessment')
         elif not d['assessment']:
             add('final_assessment', 'Obtain final assessment')
     if data['awaiting_duty_receipt'] and not pair:
