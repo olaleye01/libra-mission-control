@@ -21,7 +21,7 @@ Passwords require 10–128 characters. Authentication attempts are rate-limited.
 | POST /api/clients | Create `{name}` with case-insensitive uniqueness |
 | GET /api/sources | Available local CSV source IDs (SHA-256), filenames and sizes; no filesystem paths or file contents |
 
-GZI, Dangote and CHI are initial client records, not generated shipment data. Only the GZI import mapping is reviewed/implemented in this slice. Attempting it for another client returns 422.
+GZI, Dangote and CHI are initial client records, not generated shipment data. GZI and CHI have independently reviewed import profiles. Other clients still return 422 until their report mapping is reviewed.
 
 ## Import lifecycle
 
@@ -30,9 +30,9 @@ GZI, Dangote and CHI are initial client records, not generated shipment data. On
 | POST /api/imports/preview | Stage a CSV and return normalized records/findings; no shipment register changes |
 | GET /api/imports | Batches, status, hash, reporting cut-off, client and reconciliation summaries |
 | GET /api/imports/{id} | Saved preview including source rows, normalized dates, proposed stages and findings |
-| POST /api/imports/{id}/apply | Require `{confirm_test_import:true}`; atomically apply once to the test register |
+| POST /api/imports/{id}/apply | Require `{confirm_test_import:true}`; atomically apply once when no existing-job matches need review; otherwise 409 |
 
-Preview body contains `client_id`, optional `report_date` in YYYY-MM-DD, and either a known `source_id` or `filename` plus `content_base64`. Duplicate source bytes/client reuse the existing batch. A different cut-off on a duplicate source returns 409 rather than changing the saved interpretation silently. Applied imports are immutable through this API.
+Preview body contains `client_id`, optional `report_date` in YYYY-MM-DD, and either a known `source_id` or `filename` plus `content_base64`. Duplicate source bytes/client reuse the existing batch. A different cut-off on a duplicate source returns 409 rather than changing the saved interpretation silently. Raw import snapshots remain immutable. Report updates attach later source evidence to existing jobs separately.
 
 The summary contains shipment rows, distinct trimmed BLs, repeated-BL groups, physical rows, excluded-row categories, proposed-state counts, warning count and records with warning-level findings. Raw source remains unchanged.
 
@@ -140,3 +140,35 @@ The saved item has id, created_at and updated_at. Manual item status does not po
 No payment execution, deletion, notification-send, Hermes-shell or gateway-control endpoint is included. No arbitrary file path is accepted. Only the four explicit frontend asset paths are served; import originals, backups and application data are not static assets. Unknown routes return 404, known routes with another method return 405, and oversize requests return 413 before their body is read.
 
 The owner can view/edit all clients; staff-specific roles remain deferred. Client filtering is applied on the server but is not presented as tenant authorization. Deployment is loopback-only; proxy hosts/TLS and additional access models require explicit future configuration. No live reminder activation or VPS change is implied.
+
+## Reviewed report updates
+
+`GET /api/imports/{id}/review-updates` returns `{ok:true,review:{token,counts,rows,duplicates_to_archive}}`. Counts are `create`, `update`, `unchanged`, `review`. Rows identify source_row, BL, existing shipment_id, revision, duplicate_id, changed before/after values, kept_fields and review notes. Matching is confined to one client and trims/case-folds BL without removing punctuation. Unique cross-report matches update the same job ID. Repeated/ambiguous matches are never merged. Older reporting cut-offs or an already-linked newer upload block replacement. Unknown cut-offs remain unknown.
+
+`POST /api/imports/{id}/review-updates` requires owner/CSRF and `{confirm_test_import:true,plan_token,command_id,reason}`. It recalculates the plan inside a write transaction; a stale token, ambiguous match or operational conflict returns 409 without partial writes. Command IDs have the same strict pattern and replay behavior as shipment commands. Success returns counts and duplicates_archived. A row already attached to this report is unchanged on retries. Missing jobs are never deleted.
+
+The importer merges only usable supplied values into a separate effective source. Empty, missing and uninterpretable values retain earlier facts. Three-way comparison against prior source values preserves independent owner edits, assignments, invoices, tasks, closure and movement events. Changed source-seeded operational values are updated with a revision increment and before/after audit. Reconciled jobs still undergo quantity/release/closure validation; imports do not manufacture movements, approval dates or verified status.
+
+`report_updates` appends immutable batch/source-row links and an effective source record. `source_snapshot` remains the original record; detail adds effective_source, current_source_snapshot and report_history. These raw/effective source objects are omitted from the shipment list. Original physical CSV row and original_filename remain identifiable. `shipment_aliases` archives a prior duplicate without deleting its row or source; only duplicate rows without independent edits, movements or later report history are eligible. Active lists, client counts and action queues exclude archived duplicates. The canonical job and audit retain the duplicate ID. Migration 4 backs up the existing SQLite database before adding these tables.
+
+## CHI import profile
+
+Selecting CHI uses `mapping:chi-header-v1`, with client-scoped aliases in addition to the standard report headings: BOL/AWB NO → bl; COUNT COUNT → container_count; KG/SIZE → container_size for SEA; PAAR Recd Date → paar; OBL Recd Date → obl; Duty Pay Date → duty_receipt; Custom Exam Date → exam; Custom Rel. Date → customs_release; AGENT → handler (Field Agent). The owner confirmed that Duty Pay Date means duty receipt received, rather than a separately reported payment date. It never sets an invoice paid flag.
+
+MODE is preserved as transport_mode and in report_details. For SEA / SEA FREIGHT rows, ATA is berth and TDO / Exit Note Date is tdo. Other/unknown modes retain arrival/exit-note raw evidence and parsed reported dates in report_details, but leave sea berth/tdo and container quantities unknown with a transport_mode_review finding. No weight-to-container conversion or Customs-authority rule is inferred. Original headings/cells and unmapped client/supplier/regulatory details remain in immutable imports. Existing GZI aliases and saved previews are unchanged. CHI report revisions use the same reviewed update mechanism, scoped to the selected client.
+
+## Client and department management
+
+All routes require the existing owner session; writes also require CSRF. Department labels do not grant access. Migration 5 adds departments and client fields department_id, hidden, notes, revision and import_profile. Existing clients are assigned to FMCG 1, keeping their IDs/names and reviewed CSV profiles; an initial assignment audit event is recorded. Startup seeding no longer recreates renamed clients. SQLite backup precedes migration.
+
+- `GET /api/departments`: `{departments:[{id,name,client_count}]}` including departments with no clients.
+- `POST /api/departments`: `{name,reason,command_id}` creates a unique department. Names use the same 2–60-character ordinary-text validation as clients.
+- `GET /api/clients`: visible client metadata and active shipment counts, including department_name, hidden (boolean), notes, revision and import_profile. Optional department_id/client_id filters and include_hidden=1 permit directory inspection.
+- `POST /api/clients`: `{name,department_id,notes,reason,command_id}` creates a client. Missing department_id retains the legacy API default FMCG 1. Existing `{name}` callers remain accepted; the UI supplies a reason and idempotency key. A new display name never grants another client's reviewed import profile.
+- `POST /api/clients/{id}/update`: `{revision,changes:{name,department_id,hidden,notes},reason,command_id}`. IDs cannot change; import_profile is not editable here. Missing fields retain their values. Hidden must be boolean, notes are text up to 2000 characters, and department_id must identify a real department.
+
+Client edits require a current integer revision, nonempty reason and safe command_id (16–100 characters). Writes are atomic, bump the revision and audit before/after values. Matching command/body retries replay the original response; stale revisions and changed-body command reuse return 409. UI creation requests also use command replay. Duplicate client/department names return 409. No delete route is provided.
+
+Normal `/api/clients`, `/api/shipments`, `/api/overview`, `/api/actions` and `/api/imports` exclude hidden clients. These routes support department_id plus optional client_id and include_hidden=0|1 (default 0); invalid filters return 400. An explicit include_hidden=1 is for owner review, not a permission bypass. Owner shipment-detail reads retain access to hidden clients' existing jobs. New manual jobs, previews and both report-application paths reject hidden clients with 409 until restored.
+
+Reassignment changes only the client's department link: job/import/operational/movement rows are not moved, cloned or rewritten. Their department context is resolved from the client. Shipment responses include department_id, department_name and client_hidden. Client changes invalidate open report-update review tokens. Import profiles attach to immutable client IDs; renaming/reassignment does not select a different parser or alter historical CSV evidence.

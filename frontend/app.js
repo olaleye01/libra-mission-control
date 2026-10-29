@@ -19,14 +19,17 @@ const icons = {
   info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l4 2"/>',
   close:'<path d="m6 6 12 12M6 18 18 6"/>',
+  clients:'<circle cx="9" cy="8" r="3"/><path d="M3 21v-3a6 6 0 0 1 12 0v3m3-17a3 3 0 0 1 0 6m1 4a6 6 0 0 1 3 5v2"/>',
+  sidebarCollapse:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18m7-13-4 4 4 4"/>',
+  sidebarExpand:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18m4-13 4 4-4 4"/>',
   check:'<path d="m5 12 4 4L19 6"/>'
 };
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.file}</svg>`;
 const states = ['Awaiting arrival','In clearing','In delivery','Delivered','Completed'];
-const names = {overview:'Overview',shipments:'Shipments',imports:'Import centre',qac:'QAC review',actions:'Import Officer desk'};
+const names = {overview:'Overview',shipments:'Shipments',imports:'Import centre',qac:'QAC review',actions:'Import Officer desk',clients:'Clients & departments'};
 const fields = {pre_alert:'Pre-alert',eta:'ETA',berth:'Actual berth · ATA/ATD',paar:'PAAR received',obl:'OBL received',assessment:'Final assessment received',duty_receipt:'Duty receipt',exam:'Customs examination',customs_release:'Customs release',do:'Shipping release · DO',tdo:'Terminal Delivery Order',gate_out:'Gate-out',warehouse:'Factory / warehouse arrival',terminal_validity:'Terminal validity',ecd:'ECD received'};
 const sourceHeaders = ['S/N','Pre-alert date','Item description','BOL number','Terminal','Shipping line','ETA','ATD · GZI actual berth','Container count','Container size','PAAR date','OBL received','Assessment date','SGD number','Duty received date','Customs exam','Customs release','Shipping release / DO','TDO','Gate-out','Factory arrival (check section header)','Comments','File handler','Remark','Terminal validity','PCA Final Closure','ECD','Clearing income','Haulage income','Projected total income','Clearing cost','Haulage cost','Projected total expenses','Projected profit'];
-const state = {page:'overview',client:'',filter:'',search:'',issues:false,pageNumber:1,clients:[],batches:[],overview:null,csrf:null,batch:null,previewPage:1,previewIssues:false,detail:null,version:0,deskQueue:'all',deskTeam:'',deskStatus:''};
+const state = {page:'overview',client:'',filter:'',search:'',issues:false,pageNumber:1,clients:[],batches:[],overview:null,csrf:null,batch:null,previewPage:1,previewIssues:false,detail:null,version:0,deskQueue:'all',deskTeam:'',deskStatus:'',department:null,departments:[],managedClients:[]};
 let searchTimer, toastTimer, detailVersion = 0, tableVersion = 0;
 
 function date(value) { if (!value) return 'Not recorded'; return new Date(value+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
@@ -35,7 +38,37 @@ function initials(value) { return value ? value.split(/\s+/).slice(0,2).map(x=>x
 function warnings(record) { return (record.issues || []).filter(x=>x.severity==='warning'); }
 function pill(value) { return `<span class="state-pill stage-${states.indexOf(value)}">${esc(value)}</span>`; }
 function paintIcons(root=document) { $$('[data-icon]',root).forEach(x=>x.innerHTML=icon(x.dataset.icon)); }
-function syncSidebar() { const open=$('#sidebar').classList.contains('open');$('#sidebar').inert=matchMedia('(max-width:680px)').matches&&!open;$('#mobile-menu').setAttribute('aria-expanded',String(open)); }
+const sidebarMedia=matchMedia('(max-width:680px)');
+let sidebarCollapsed=false;
+// A blocked browser storage setting must never prevent access to navigation.
+try {sidebarCollapsed=localStorage.getItem('libra.sidebarCollapsed')==='true';} catch {}
+function syncSidebar() {
+  const sidebar=$('#sidebar'),mobile=sidebarMedia.matches;
+  if(!mobile)sidebar.classList.remove('open');
+  const open=sidebar.classList.contains('open'),expanded=mobile?open:!sidebarCollapsed;
+  const label=mobile?'Close navigation':expanded?'Collapse sidebar':'Expand sidebar';
+  $('#app').classList.toggle('sidebar-collapsed',!mobile&&sidebarCollapsed);
+  sidebar.inert=mobile&&!open;
+  $('.main-shell').inert=mobile&&open;
+  $('#sidebar-backdrop').hidden=!(mobile&&open);
+  $('#mobile-menu').setAttribute('aria-expanded',String(mobile&&open));
+  const toggle=$('#sidebar-toggle');
+  toggle.setAttribute('aria-expanded',String(expanded));
+  toggle.setAttribute('aria-label',label);toggle.title=label;
+  toggle.innerHTML=icon(mobile?'close':expanded?'sidebarCollapse':'sidebarExpand');
+  if(mobile&&!open&&sidebar.contains(document.activeElement))$('#mobile-menu').focus();
+}
+function closeMobileSidebar() {
+  const returnFocus=sidebarMedia.matches&&$('#sidebar').classList.contains('open');
+  $('#sidebar').classList.remove('open');syncSidebar();
+  if(returnFocus)$('#mobile-menu').focus();
+}
+function toggleSidebar() {
+  if(sidebarMedia.matches){closeMobileSidebar();return;}
+  sidebarCollapsed=!sidebarCollapsed;
+  try {localStorage.setItem('libra.sidebarCollapsed',String(sidebarCollapsed));} catch {}
+  syncSidebar();
+}
 function toast(message) { clearTimeout(toastTimer); $('#toast').textContent=message; $('#toast').hidden=false; toastTimer=setTimeout(()=>$('#toast').hidden=true,4500); }
 async function api(path, body) {
   const options = {credentials:'same-origin',headers:{}};
@@ -77,12 +110,26 @@ $('#auth-form').addEventListener('submit', async event=>{
   } catch(error) {$('#auth-error').textContent=error.message;} finally {button.disabled=false;}
 });
 
+function workspaceQuery(includeClient=true) {
+  const query=new URLSearchParams();
+  if(state.department)query.set('department_id',state.department);
+  if(includeClient&&state.client)query.set('client_id',state.client);
+  return query;
+}
 async function refreshMeta() {
-  const [clients,batches,overview]=await Promise.all([api('/api/clients'),api('/api/imports'),api('/api/overview')]);
+  state.departments=(await api('/api/departments')).departments;
+  if(state.department===null)state.department=String(state.departments.find(d=>d.name==='FMCG 1')?.id||'');
+  if(state.department&&!state.departments.some(d=>String(d.id)===state.department))state.department='';
+  $('#department-select').innerHTML='<option value="">All departments</option>'+state.departments.map(d=>`<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  $('#department-select').value=state.department;
+  const query=workspaceQuery(false);
+  const [clients,batches,overview]=await Promise.all([api('/api/clients?'+query),api('/api/imports?'+query),api('/api/overview?'+query)]);
   state.clients=clients.clients; state.batches=batches.imports; state.overview=overview;
+  if(state.client&&!state.clients.some(c=>String(c.id)===state.client))state.client='';
+  if(state.batch&&!state.batches.some(b=>b.id===state.batch.id))state.batch=null;
   $('#nav-total').textContent=number(overview.total); $('#nav-qac').textContent=number(overview.rows_with_issues);
   $('#nav-imports').textContent=number(batches.imports.filter(x=>x.status==='preview').length);
-  $('#sidebar-clients').innerHTML=state.clients.map(c=>`<button class="client-nav ${state.client===String(c.id)?'selected':''}" data-client="${c.id}"><span class="client-dot"></span>${esc(c.name)}<small>${number(c.shipment_count)}</small></button>`).join('');
+  $('#sidebar-clients').innerHTML=state.clients.map(c=>`<button class="client-nav ${state.client===String(c.id)?'selected':''}" data-client="${c.id}" title="${esc(c.name)}" aria-label="${esc(c.name)} ${number(c.shipment_count)}"><span class="client-dot" aria-hidden="true"></span><span class="client-name">${esc(c.name)}</span><span class="client-initials" aria-hidden="true">${esc(c.name.length<=3?c.name:initials(c.name))}</span><small>${number(c.shipment_count)}</small></button>`).join('');
 }
 async function start() { await refreshMeta(); await render(); }
 async function navigate(page,client=state.client) {
@@ -90,8 +137,10 @@ async function navigate(page,client=state.client) {
   $('#sidebar').classList.remove('open'); syncSidebar(); await render();
 }
 function heading() {
-  const text={overview:['Shipment overview','Track the whole journey. Know what needs your attention.'],shipments:['Shipment register','Every client, every milestone, in one shared register.'],imports:['Import centre','Preview first. Keep the source. Apply only what you have reviewed.'],actions:['Import Officer desk','Coordinate the job. See the next action, responsible team and response you are waiting for.'],qac:['QAC review queue','Review inconsistencies before they become operational assumptions.']};
-  return `<div class="page-heading"><div><span class="eyebrow">LIBRA CIRCLE / CLEARING OPERATIONS</span><h1>${text[state.page][0]}</h1><p>${text[state.page][1]}</p></div><div class="heading-actions"><button class="button secondary" data-go="${state.page==='imports'?'shipments':'imports'}">${icon(state.page==='imports'?'ship':'file')}${state.page==='imports'?'View register':'Import history'}</button>${state.page!=='imports'?`<button class="button primary" id="new-job">+ Create shipment</button>`:''}</div></div>`;
+  const text={overview:['Shipment overview','Track the whole journey. Know what needs your attention.'],shipments:['Shipment register','Every client, every milestone, in one shared register.'],imports:['Import centre','Preview first. Keep the source. Apply only what you have reviewed.'],actions:['Import Officer desk','Coordinate the job. See the next action, responsible team and response you are waiting for.'],qac:['QAC review queue','Review inconsistencies before they become operational assumptions.'],clients:['Clients & departments','Organise client ownership, keep names current and restore hidden clients.']};
+  const department=state.departments.find(d=>String(d.id)===state.department)?.name||'All departments';
+  const controls=state.page==='clients'?`<button class="button secondary" id="new-department">+ Add department</button><button class="button primary" id="new-client">+ Add client</button>`:`<button class="button secondary" data-go="${state.page==='imports'?'shipments':'imports'}">${icon(state.page==='imports'?'ship':'file')}${state.page==='imports'?'View register':'Import history'}</button>${state.page!=='imports'?`<button class="button primary" id="new-job">+ Create shipment</button>`:''}`;
+  return `<div class="page-heading ${state.page==='clients'?'directory-heading':''}"><div><span class="eyebrow">LIBRA CIRCLE / ${esc(department)}</span><h1>${text[state.page][0]}</h1><p>${text[state.page][1]}</p></div><div class="heading-actions">${controls}</div></div>`;
 }
 function tabs() {
   return `<div class="context-strip"><div class="client-tabs"><button class="client-tab ${!state.client?'active':''}" data-client="">All clients</button>${state.clients.map(c=>`<button class="client-tab ${state.client===String(c.id)?'active':''}" data-client="${c.id}">${esc(c.name)}<span class="tab-number">${number(c.shipment_count)}</span></button>`).join('')}</div><span class="test-badge">TEST WORKSPACE</span></div>`;
@@ -106,12 +155,13 @@ async function render() {
   $$('.client-nav').forEach(b=>b.classList.toggle('selected',b.dataset.client===state.client));
   $('#main').innerHTML=heading()+`<div class="panel"><div class="skeleton" aria-label="Loading workspace"></div></div>`;
   try {
+    if (state.page==='clients') {await renderClients(version);return;}
     if (state.page==='actions') {await renderActions(version);return;}
     if (state.page==='imports') {
       const data=await api('/api/sources'); if(version!==state.version) return;
       renderImports(data.sources); return;
     }
-    const query=new URLSearchParams(); if(state.client)query.set('client_id',state.client);
+    const query=workspaceQuery();
     const overview=await api('/api/overview?'+query); if(version!==state.version)return;
     const top=heading()+tabs()+(state.page==='qac'?notice(`${number(overview.rows_with_issues)} records have review findings. A finding describes a source-data question, not confirmed noncompliance.`,true):cards(overview));
     $('#main').innerHTML=top+(state.page==='overview'?`<section class="desk-home"><div class="panel-title">Your coordination desk</div><p class="detail-note">You own the job. Teams own their next actions. Reminders stay with the owner.</p>${deskCards(overview.queue_counts,true)}</section>`:'')+`<div id="register-panel" class="panel"></div>`+(state.page==='overview'?lowerPanels(): '');
@@ -123,13 +173,13 @@ function lowerPanels() {
 }
 async function loadTable(version=state.version) {
   const ticket=++tableVersion;
-  const query=new URLSearchParams({page:state.pageNumber,limit:12});
+  const query=workspaceQuery();query.set('page',state.pageNumber);query.set('limit',12);
   if(state.client)query.set('client_id',state.client); if(state.filter)query.set('state',state.filter);
   if(state.search)query.set('search',state.search); if(state.issues||state.page==='qac')query.set('issues','1');
   const result=await api('/api/shipments?'+query); if(version!==state.version||ticket!==tableVersion)return;
   const panel=$('#register-panel'); if(!panel)return;
   const title=state.page==='qac'?'Records to review':'Shipment register';
-  panel.innerHTML=`<div class="panel-header"><div><div class="panel-title">${title}<span class="count-tag">${number(result.total)}</span></div><p class="panel-subtitle">${state.filter?esc(state.filter)+' · ':''}Owner records & historical proposals · test register</p></div><span class="report-label">${state.overview.total?'Source cut-off may be unknown':'Start with your GZI report'}</span></div><div class="table-toolbar"><div class="filter-tabs"><button class="filter-tab ${!state.issues?'active':''}" data-issues="0">${state.page==='qac'?'All findings':'All shipments'}</button>${state.page!=='qac'?`<button class="filter-tab ${state.issues?'active':''}" data-issues="1">Needs review</button>`:''}</div><div class="search-box"><span>${icon('search')}</span><input id="shipment-search" type="search" placeholder="Search BL, client, officer or agent…" aria-label="Search shipments" value="${esc(state.search)}"></div></div>${result.total?shipmentTable(result.shipments):empty(state.search||state.filter||state.issues?'No matching shipments':'Your register is ready',state.search||state.filter||state.issues?'Try another search, state or client filter.':'Preview the GZI report, review the findings, then apply it to your test register.',state.search||state.filter||state.issues?'':'imports')}${result.total?`<div class="table-footer"><span>Showing ${(result.page-1)*result.limit+1}–${Math.min(result.page*result.limit,result.total)} of ${number(result.total)} shipments</span><div class="pagination"><button class="page-button" data-page-turn="-1" ${result.page<=1?'disabled':''}>← Previous</button><span class="page-button active">${result.page}</span><button class="page-button" data-page-turn="1" ${result.page*result.limit>=result.total?'disabled':''}>Next →</button></div></div>`:''}`;
+  panel.innerHTML=`<div class="panel-header"><div><div class="panel-title">${title}<span class="count-tag">${number(result.total)}</span></div><p class="panel-subtitle">${state.filter?esc(state.filter)+' · ':''}Owner records & historical proposals · test register</p></div><span class="report-label">${state.overview.total?'Source cut-off may be unknown':'Start with a client report'}</span></div><div class="table-toolbar"><div class="filter-tabs"><button class="filter-tab ${!state.issues?'active':''}" data-issues="0">${state.page==='qac'?'All findings':'All shipments'}</button>${state.page!=='qac'?`<button class="filter-tab ${state.issues?'active':''}" data-issues="1">Needs review</button>`:''}</div><div class="search-box"><span>${icon('search')}</span><input id="shipment-search" type="search" placeholder="Search BL, client, officer or agent…" aria-label="Search shipments" value="${esc(state.search)}"></div></div>${result.total?shipmentTable(result.shipments):empty(state.search||state.filter||state.issues?'No matching shipments':'Your register is ready',state.search||state.filter||state.issues?'Try another search, state or client filter.':'Preview a client report, review the findings, then apply it to your test register.',state.search||state.filter||state.issues?'':'imports')}${result.total?`<div class="table-footer"><span>Showing ${(result.page-1)*result.limit+1}–${Math.min(result.page*result.limit,result.total)} of ${number(result.total)} shipments</span><div class="pagination"><button class="page-button" data-page-turn="-1" ${result.page<=1?'disabled':''}>← Previous</button><span class="page-button active">${result.page}</span><button class="page-button" data-page-turn="1" ${result.page*result.limit>=result.total?'disabled':''}>Next →</button></div></div>`:''}`;
 }
 function shipmentTable(records,preview=false) {
   return `<div class="table-scroll"><table class="shipments-table"><thead><tr><th>Shipment / bill of lading</th><th>Client</th><th>Terminal / line</th><th>Containers</th><th>Reported stage</th><th>Field Agent</th><th>Review</th></tr></thead><tbody>${records.map(r=>`<tr data-${preview?'preview-row':'shipment'}="${preview?r.source_row:r.id}"><td><button class="bl-button" data-${preview?'preview-row':'shipment'}="${preview?r.source_row:r.id}">${esc(r.bl)}</button><span class="cargo-description" title="${esc(r.description)}">${esc(r.description)}</span></td><td><span class="table-client">${esc(r.client_name||state.batch?.client_name||'GZI')}</span></td><td class="terminal-line">${esc(r.terminal||'Not recorded')}<small>${esc(r.liner||'Line unknown')}</small></td><td>${r.container_count?number(r.container_count):'Unknown'}${r.container_size?` × ${esc(r.container_size)}′`:''}</td><td>${pill(r.state||r.proposed_state)}</td><td><span class="handler"><span class="mini-avatar">${esc(initials(r.field_agent??r.handler))}</span>${esc((r.field_agent??r.handler)||'Unassigned')}</span></td><td>${warnings(r).length?`<span class="issue-label">${icon('warning')}${warnings(r).length} ${warnings(r).length===1?'finding':'findings'}</span>`:'<span class="muted">Source only</span>'}</td></tr>`).join('')}</tbody></table></div>`;
@@ -137,7 +187,8 @@ function shipmentTable(records,preview=false) {
 
 function renderImports(sources) {
   state.sources=sources;
-  $('#main').innerHTML=heading()+notice('Imports stay separate from the register until you review and apply them. Applying here creates test records only; reminders remain off.')+`<div class="upload-layout"><section class="panel"><div class="panel-header"><div class="panel-title">Preview a client report</div><span class="count-tag">CSV</span></div><form id="upload-form" class="upload-form"><label id="drop-zone" class="drop-zone" for="csv-file"><span class="empty-icon">${icon('upload')}</span><strong>Drop a report here, or choose a file</strong><p>UTF-8 CSV · up to 5 MB · original preserved</p><input id="csv-file" name="csv-file" type="file" accept=".csv,text/csv"></label><div class="form-grid"><div class="field"><label for="import-client">Client</label><select id="import-client">${state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><small>GZI: recognized headings are mapped in any order. Missing columns stay pending.</small></div><div class="field"><label for="report-date">Reporting cut-off <span class="muted">(optional)</span></label><input id="report-date" type="date"><small>Leave empty if unknown. The filename is not a confirmed cut-off.</small></div></div><p id="import-error" class="form-error" role="alert"></p><button id="upload-submit" type="submit" class="button primary">Build import preview ${icon('arrow')}</button></form></section><section class="panel source-card"><span class="eyebrow">AVAILABLE ON THIS MACHINE</span><h2 class="panel-title">Start with the GZI report</h2><p>Use the supplied source without uploading it again. Available columns are mapped; missing fields stay unknown.</p>${sources.length?sources.map(s=>`<div class="source-file"><strong>${icon('file')}${esc(s.filename)}</strong><small>${number(Math.round(s.size/1024))} KB · GZI mapping · source file</small><button class="button secondary" data-source="${s.id}">Preview this report ${icon('arrow')}</button></div>`).join(''):'<p>No bundled source is available. Choose a CSV to begin.</p>'}<p>The importer keeps repeated BLs separate and highlights ambiguous dates, release gaps and partial-delivery notes.</p></section></div><div id="preview-target"></div><section class="panel"><div class="panel-header"><div class="panel-title">Import history<span class="count-tag">${state.batches.length}</span></div></div><div class="small-panel-body">${state.batches.length?state.batches.map(b=>`<div class="import-row"><span class="file-icon">${icon('file')}</span><div><strong>${esc(b.filename)}</strong><small>${esc(b.client_name)} · ${number(b.summary.shipments)} shipments · ${b.report_date?date(b.report_date):'Unknown cut-off'}</small></div><button class="badge ${b.status==='preview'?'preview':''}" data-batch="${b.id}">${b.status==='preview'?'Open preview':'View applied batch'}</button></div>`).join(''):'<div class="import-row muted">No import previews yet.</div>'}</div></section>`;
+  const availableSources=sources.filter(source=>state.clients.some(client=>client.import_profile===source.mapping));
+  $('#main').innerHTML=heading()+notice('Imports stay separate from the register until you review and apply them. Applying here creates test records only; reminders remain off.')+`<div class="upload-layout"><section class="panel"><div class="panel-header"><div class="panel-title">Preview a client report</div><span class="count-tag">CSV</span></div><form id="upload-form" class="upload-form"><label id="drop-zone" class="drop-zone" for="csv-file"><span class="empty-icon">${icon('upload')}</span><strong>Drop a report here, or choose a file</strong><p>UTF-8 CSV · up to 5 MB · original preserved</p><input id="csv-file" name="csv-file" type="file" accept=".csv,text/csv"></label><div class="form-grid"><div class="field"><label for="import-client">Client</label><select id="import-client">${state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select><small>GZI and CHI: recognized headings are mapped in any order. Missing columns stay pending.</small></div><div class="field"><label for="report-date">Reporting cut-off <span class="muted">(optional)</span></label><input id="report-date" type="date"><small>Leave empty if unknown. The filename is not a confirmed cut-off.</small></div></div><p id="import-error" class="form-error" role="alert"></p><button id="upload-submit" type="submit" class="button primary">Build import preview ${icon('arrow')}</button></form></section><section class="panel source-card"><span class="eyebrow">AVAILABLE ON THIS MACHINE</span><h2 class="panel-title">Available report samples</h2><p>Use the supplied source without uploading it again. Available columns are mapped; missing fields stay unknown.</p>${availableSources.length?availableSources.map(s=>`<div class="source-file"><strong>${icon('file')}${esc(s.filename)}</strong><small>${number(Math.round(s.size/1024))} KB · GZI mapping · source file</small><button class="button secondary" data-source="${s.id}">Preview this report ${icon('arrow')}</button></div>`).join(''):'<p>No bundled source is available. Choose a CSV to begin.</p>'}<p>The importer keeps repeated BLs separate and highlights ambiguous dates, release gaps and partial-delivery notes.</p></section></div><div id="preview-target"></div><section class="panel"><div class="panel-header"><div class="panel-title">Import history<span class="count-tag">${state.batches.length}</span></div></div><div class="small-panel-body">${state.batches.length?state.batches.map(b=>`<div class="import-row"><span class="file-icon">${icon('file')}</span><div><strong>${esc(b.filename)}</strong><small>${esc(b.client_name)} · ${number(b.summary.shipments)} shipments · ${b.report_date?date(b.report_date):'Unknown cut-off'}</small></div><button class="badge ${b.status==='preview'?'preview':''}" data-batch="${b.id}">${b.status==='preview'?'Open preview':'View applied batch'}</button></div>`).join(''):'<div class="import-row muted">No import previews yet.</div>'}</div></section>`;
   const zone=$('#drop-zone');
   ['dragenter','dragover'].forEach(type=>zone.addEventListener(type,e=>{e.preventDefault();zone.classList.add('drag');}));
   ['dragleave','drop'].forEach(type=>zone.addEventListener(type,e=>{e.preventDefault();zone.classList.remove('drag');}));
@@ -147,7 +198,7 @@ function renderImports(sources) {
 }
 async function upload(event) {
   event.preventDefault(); const file=$('#csv-file').files[0];
-  if(!file){$('#import-error').textContent='Choose a CSV file, or use the available GZI source.';return;}
+  if(!file){$('#import-error').textContent='Choose a CSV file, or use an available source.';return;}
   if(file.size>5*1024*1024){$('#import-error').textContent='The maximum CSV size is 5 MB.';return;}
   const reader=new FileReader(); reader.onload=()=>preview({filename:file.name,content_base64:reader.result.split(',')[1]});reader.onerror=()=>$('#import-error').textContent='The selected file could not be read.';reader.readAsDataURL(file);
 }
@@ -172,28 +223,33 @@ function mappingReport(summary) {
   return `<section class="mapping-report"><h3>Mapped columns & pending fields</h3><p class="detail-note">Missing columns and empty values stay unknown. Pending here means data still to supply or review, not proof a document has not been received.</p>${mappings.map(m=>`<details class="mapping-section"><summary>Header row ${m.header_row} · ${esc(m.section)} · ${m.mapped.length} mapped · ${m.pending.length} pending</summary><div class="mapping-grid"><div><h4>Available columns</h4>${m.mapped.map(c=>`<p><strong>${esc(c.header)}</strong> → ${esc(c.label)} <small>(column ${c.column})</small></p>`).join('')}</div><div><h4>Pending / not mapped</h4>${m.pending.map(c=>`<p>${esc(c.label)} <small>· ${esc(c.reason)}</small></p>`).join('')||'<p>All supported columns supplied.</p>'}${m.unmapped.length?`<h4>Other original columns retained</h4>${m.unmapped.map(c=>`<p>Column ${c.column} · ${esc(c.header)}</p>`).join('')}`:''}</div></div></details>`).join('')}${summary.skipped_rows?.length?notice(summary.skipped_rows.map(row=>`Row ${row.source_row}: ${esc(row.reason)}`).join('<br>'),true):''}</section>`;
 }
 function pendingReport(r) {
-  const source=r.source_snapshot||r;
+  const source=r.current_source_snapshot||r.source_snapshot||r;
   if(!source.pending_fields?.length)return '';
   const labels=Object.fromEntries((state.batch?.summary?.field_labels?Object.entries(state.batch.summary.field_labels):[]));
   for(const m of source.field_mapping||[])labels[m.field]=m.label;
   const missing=source.missing_columns||[],blank=source.blank_fields||[],unresolved=source.unresolved_fields||[];
   const names=list=>list.map(k=>esc(labels[k]||opFields[k]||({sgd:'C Number / SGD',container_count:'Container count',handler:'File handler'})[k]||k.replaceAll('_',' '))).join(', ');
-  return `<section class="detail-section"><h3>Pending source information</h3><p class="detail-note">Original import coverage. Owner updates are shown separately above.</p>${missing.length?`<p class="detail-note"><strong>Columns not supplied / ambiguous:</strong> ${names(missing)}.</p>`:''}${blank.length?`<p class="detail-note"><strong>Columns present, values blank:</strong> ${names(blank)}.</p>`:''}${unresolved.length?`<p class="detail-note"><strong>Values need interpretation:</strong> ${names(unresolved)}.</p>`:''}</section>`;
+  return `<section class="detail-section"><h3>Pending source information</h3><p class="detail-note">Source coverage for the latest report. Earlier known values and owner updates are shown above.</p>${missing.length?`<p class="detail-note"><strong>Columns not supplied / ambiguous:</strong> ${names(missing)}.</p>`:''}${blank.length?`<p class="detail-note"><strong>Columns present, values blank:</strong> ${names(blank)}.</p>`:''}${unresolved.length?`<p class="detail-note"><strong>Values need interpretation:</strong> ${names(unresolved)}.</p>`:''}</section>`;
 }
 function renderPreview() {
   const target=$('#preview-target');if(!target||!state.batch)return;
   const b=state.batch,s=b.summary; const records=state.previewIssues?b.records.filter(r=>warnings(r).length):b.records;
   const from=(state.previewPage-1)*10, page=records.slice(from,from+10);
-  target.innerHTML=`<section class="panel preview-panel"><div class="preview-header"><div><span class="eyebrow">${b.status==='applied'?'APPLIED TO TEST REGISTER':'IMPORT PREVIEW / NOT YET APPLIED'}</span><h2>${esc(b.filename)}</h2><p>${esc(b.client_name)} · GZI heading mapping · ${b.report_date?'Reporting cut-off '+date(b.report_date):'Reporting cut-off unknown'}</p></div>${b.status==='preview'?`<button class="button primary" id="apply-import">Apply to test register ${icon('arrow')}</button>`:`<button class="button secondary" data-go="shipments">View register ${icon('arrow')}</button>`}</div><div class="preview-stats"><div class="preview-stat"><strong>${number(s.shipments)}</strong><span>Shipment rows</span></div><div class="preview-stat"><strong>${number(s.unique_bls)}</strong><span>Distinct BLs</span></div><div class="preview-stat"><strong>${number(s.rows_with_issues)}</strong><span>Records to review</span></div><div class="preview-stat"><strong>${number(s.physical_rows-s.shipments)}</strong><span>Non-shipment rows excluded</span></div></div><div class="source-note">${s.duplicate_groups?`${number(s.duplicate_groups)} repeated-BL group · records will remain separate. `:''}Stages are historical proposals. ECD does not establish Completed; quantities and dates may need review.<br>Excluded: ${Object.entries(s.excluded).map(([k,v])=>`${esc(k)} ${v}`).join(' · ')}</div>${mappingReport(s)}<div class="table-toolbar"><div class="filter-tabs"><button class="filter-tab ${!state.previewIssues?'active':''}" data-preview-issues="0">All source rows</button><button class="filter-tab ${state.previewIssues?'active':''}" data-preview-issues="1">Needs review</button></div><span class="report-label">Click a BL to inspect its source and milestones</span></div>${page.length?shipmentTable(page,true):empty('No review findings','There are no warning-level findings in this selection.','') }<div class="preview-pagination"><span>${records.length?from+1:0}–${Math.min(from+10,records.length)} of ${number(records.length)} records</span><div class="pagination"><button class="page-button" data-preview-page="-1" ${state.previewPage<=1?'disabled':''}>← Previous</button><button class="page-button" data-preview-page="1" ${from+10>=records.length?'disabled':''}>Next →</button></div></div></section><div class="notice warning">${icon('info')}<span>Applying preserves every original value and keeps historical-state warnings. No live reminders or verified release claims will be created.</span></div>`;
+  target.innerHTML=`<section class="panel preview-panel"><div class="preview-header"><div><span class="eyebrow">${b.status==='applied'?'APPLIED TO TEST REGISTER':'IMPORT PREVIEW / NOT YET APPLIED'}</span><h2>${esc(b.filename)}</h2><p>${esc(b.client_name)} · ${b.mapping==='chi-header-v1'?'CHI':'GZI'} heading mapping · ${b.report_date?'Reporting cut-off '+date(b.report_date):'Reporting cut-off unknown'}</p></div>${b.status==='preview'?`<button class="button primary" id="apply-import">Apply to test register ${icon('arrow')}</button>`:`<div><button class="button secondary" id="apply-import">Review report updates</button> <button class="button secondary" data-go="shipments">View register ${icon('arrow')}</button></div>`}</div><div class="preview-stats"><div class="preview-stat"><strong>${number(s.shipments)}</strong><span>Shipment rows</span></div><div class="preview-stat"><strong>${number(s.unique_bls)}</strong><span>Distinct BLs</span></div><div class="preview-stat"><strong>${number(s.rows_with_issues)}</strong><span>Records to review</span></div><div class="preview-stat"><strong>${number(s.physical_rows-s.shipments)}</strong><span>Non-shipment rows excluded</span></div></div><div class="source-note">${s.duplicate_groups?`${number(s.duplicate_groups)} repeated-BL group · records will remain separate. `:''}Stages are historical proposals. ECD does not establish Completed; quantities and dates may need review.<br>Excluded: ${Object.entries(s.excluded).map(([k,v])=>`${esc(k)} ${v}`).join(' · ')}</div>${mappingReport(s)}<div class="table-toolbar"><div class="filter-tabs"><button class="filter-tab ${!state.previewIssues?'active':''}" data-preview-issues="0">All source rows</button><button class="filter-tab ${state.previewIssues?'active':''}" data-preview-issues="1">Needs review</button></div><span class="report-label">Click a BL to inspect its source and milestones</span></div>${page.length?shipmentTable(page,true):empty('No review findings','There are no warning-level findings in this selection.','') }<div class="preview-pagination"><span>${records.length?from+1:0}–${Math.min(from+10,records.length)} of ${number(records.length)} records</span><div class="pagination"><button class="page-button" data-preview-page="-1" ${state.previewPage<=1?'disabled':''}>← Previous</button><button class="page-button" data-preview-page="1" ${from+10>=records.length?'disabled':''}>Next →</button></div></div></section><div class="notice warning">${icon('info')}<span>Applying preserves every original value and keeps historical-state warnings. No live reminders or verified release claims will be created.</span></div>`;
 }
-function confirmApply() {
+async function confirmApply() {
   const b=state.batch;
-  $('#action-content').innerHTML=`<span class="test-badge">TEST REGISTER ONLY</span><h2 id="action-title">Apply ${number(b.summary.shipments)} shipment records?</h2><p>The original report and all findings will be retained. These are historical proposals, not verified live shipment statuses.</p><form id="apply-form"><label><input id="confirm-test" type="checkbox" required><span>I have reviewed the preview and understand this applies records to the test register. Notifications remain disabled.</span></label><p id="apply-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close-action>Keep reviewing</button><button class="button primary" type="submit">Apply test import</button></div></form>`;
+  let review;
+  try {review=(await api('/api/imports/'+b.id+'/review-updates')).review;} catch(error){toast(error.message);return;}
+  const c=review.counts;
+  $('#action-dialog').classList.add('wide');
+  $('#action-content').innerHTML=`<span class="test-badge">TEST REGISTER ONLY</span><h2 id="action-title">Review report updates</h2><p>${number(c.update)} existing jobs to update · ${number(c.create)} new jobs · ${number(c.unchanged)} already linked · ${number(c.review)} need review.</p><p>Matches use BL within this client. Earlier reports stay in history. Blank or missing cells do not erase known values. Independent owner edits are kept; no movement counts or approval evidence are inferred.</p>${review.duplicates_to_archive?notice(`${number(review.duplicates_to_archive)} duplicate register rows will be archived under their existing job IDs. Their source rows remain in history.`,true):''}<div class="table-scroll"><table class="raw-table"><thead><tr><th>BL / source row</th><th>Result</th><th>Review details</th></tr></thead><tbody>${review.rows.map(r=>`<tr><td>${esc(r.bl)}<br>Row ${r.source_row}</td><td>${esc(({create:'New job',update:'Update existing job',unchanged:'Already linked',review:'Needs manual review'})[r.action])}${r.shipment_id?`<br>LMC-${String(r.shipment_id).padStart(5,'0')}`:''}</td><td>${esc(r.note)}${Object.keys(r.changes).length?`<details><summary>${Object.keys(r.changes).length} changed fields</summary>${Object.entries(r.changes).map(([k,v])=>`<p>${esc(k)}: ${esc(v.before??'Unknown')} → ${esc(v.after??'Unknown')}</p>`).join('')}</details>`:''}${r.kept_fields.length?`<p>Owner values kept: ${r.kept_fields.map(esc).join(', ')}.</p>`:''}</td></tr>`).join('')}</tbody></table></div>${c.review?notice('Resolve ambiguous matches or operational conflicts before applying this report. No records will change.',true):''}<form id="apply-form">${inputField('reason','Reason for report update','','text','required maxlength="500"')}<label class="checkbox-label"><input id="confirm-test" type="checkbox" required> I reviewed the matches and changes for this historical test report. Notifications remain off.</label><p id="apply-error" class="form-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close-action>Keep reviewing</button><button class="button primary" type="submit" ${c.review?'disabled':''}>Apply reviewed report</button></div></form>`;
   $('#action-dialog').showModal();
+  const command_id=crypto.randomUUID();
   $('#apply-form').addEventListener('submit',async event=>{
-    event.preventDefault();const button=$('button[type=submit]',event.currentTarget);button.disabled=true;
-    try {await api('/api/imports/'+b.id+'/apply',{confirm_test_import:true});$('#action-dialog').close();state.batch=null;await refreshMeta();await navigate('overview');toast('Import applied to your test register. All source findings retained.');}
-    catch(error){$('#apply-error').textContent=error.message;button.disabled=false;}
+    event.preventDefault();const f=event.currentTarget,button=$('button[type=submit]',f);button.disabled=true;
+    try {const result=await api('/api/imports/'+b.id+'/review-updates',{confirm_test_import:true,plan_token:review.token,command_id,reason:formValue(f,'reason')});$('#action-dialog').close();state.batch=null;await refreshMeta();await navigate('overview');toast(`${result.counts.update} jobs updated, ${result.counts.create} new jobs; ${result.duplicates_archived} duplicate rows archived.`);}
+    catch(error){$('#apply-error').textContent=error.message;button.disabled=!!c.review;}
   });
 }
 
@@ -345,9 +401,9 @@ function renderDetail(tab='milestones') {
   else if(tab==='coordination'&&editable)body.innerHTML=coordinationForm(r);
   else if(tab==='source') {
     const source=r.source_snapshot||r;
-    body.innerHTML=`<section class="detail-section"><h3>Original source</h3>${r.batch_id?`<p class="source-meta">File: ${esc(r.filename)}<br>Section: ${esc(source.section)}<br>Physical CSV row: ${r.source_row}<br>Reporting cut-off: ${r.report_date?date(r.report_date):'Unknown'}<br>Import batch: ${esc(r.batch_id)}</p>${notice('Original values remain unchanged beneath owner updates.')}<table class="raw-table"><tbody>${source.raw.map((v,i)=>`<tr><td>${esc(source.source_headers?(source.source_headers[i]||'Unnamed column '+(i+1)):(sourceHeaders[i]||'Column '+(i+1)))}</td><td>${v?esc(v):'<span class="muted">Empty cell</span>'}</td></tr>`).join('')}</tbody></table>`:'<p class="detail-note">Created manually by the owner. No CSV source is attached.</p>'}</section><section class="detail-section"><h3>Application history</h3>${(r.history||[]).map(e=>`<details class="history-entry"><summary>${esc(e.action.replaceAll('_',' '))} · ${esc(new Date(e.at*1000).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}))} · ${esc(e.actor)}</summary>${e.detail?.reason?`<p>Reason: ${esc(e.detail.reason)}</p>`:''}<pre>${esc(JSON.stringify(e.detail||{},null,2))}</pre></details>`).join('')||'<p class="detail-note">No recorded changes.</p>'}</section>`;
+    body.innerHTML=`<section class="detail-section"><h3>Original source</h3>${r.batch_id?`<p class="source-meta">File: ${esc(r.original_filename||r.filename)}<br>Section: ${esc(source.section)}<br>Physical CSV row: ${r.source_row}<br>Latest known reporting cut-off: ${r.report_date?date(r.report_date):'Unknown'}<br>Import batch: ${esc(r.batch_id)}</p>${notice('Original values remain unchanged beneath owner updates.')}<table class="raw-table"><tbody>${source.raw.map((v,i)=>`<tr><td>${esc(source.source_headers?(source.source_headers[i]||'Unnamed column '+(i+1)):(sourceHeaders[i]||'Column '+(i+1)))}</td><td>${v?esc(v):'<span class="muted">Empty cell</span>'}</td></tr>`).join('')}</tbody></table>`:'<p class="detail-note">Created manually by the owner. No CSV source is attached.</p>'}</section>${r.report_history?.length?`<section class="detail-section"><h3>Report update history</h3><p class="detail-note">The original source above remains unchanged. Later reports update known values without clearing fields absent from a newer report.</p>${r.report_history.map(h=>`<details class="history-entry"><summary>${esc(h.filename)} · row ${h.source_row} · ${h.report_date?date(h.report_date):'Cut-off unknown'}</summary><table class="raw-table"><tbody>${h.record.raw.map((v,i)=>`<tr><td>${esc(h.record.source_headers?.[i]||'Column '+(i+1))}</td><td>${esc(v)}</td></tr>`).join('')}</tbody></table></details>`).join('')}</section>`:''}<section class="detail-section"><h3>Application history</h3>${(r.history||[]).map(e=>`<details class="history-entry"><summary>${esc(e.action.replaceAll('_',' '))} · ${esc(new Date(e.at*1000).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}))} · ${esc(e.actor)}</summary>${e.detail?.reason?`<p>Reason: ${esc(e.detail.reason)}</p>`:''}<pre>${esc(JSON.stringify(e.detail||{},null,2))}</pre></details>`).join('')||'<p class="detail-note">No recorded changes.</p>'}</section>`;
   } else {
-    body.innerHTML=`${notice(esc(r.state_note),!o?.reconciled)}<div class="detail-facts">${[['Terminal',r.terminal],['Shipping line',r.liner],['Containers',r.container_count],['Pending warehouse',r.pending_count],['Delivery location',r.delivery_location],['Field Agent',r.field_agent??r.handler],['Reminder recipient','Owner'],['C Number / SGD',r.sgd]].map(([l,v])=>`<div class="fact"><span>${l}</span><strong>${esc(v??'Not established')||'Not recorded'}</strong></div>`).join('')}</div>${r.assessment?.draft_requirements_cleared?notice('Client approval follow-up cleared: final assessment received date and C Number are recorded. No approval date or approver was inferred.'):''}<section class="detail-section"><h3>Documents & milestones</h3><div class="milestone-grid">${Object.entries(opFields).map(([k,l])=>`<div class="milestone ${d[k]?'recorded':''}"><span class="milestone-label"><i class="milestone-dot"></i>${l}</span><span class="milestone-value ${!d[k]?'missing':''}">${d[k]?date(d[k]):'Not recorded / review'}</span></div>`).join('')}</div><p class="detail-note">Client approval remains part of preparing the final assessment; approval details are not recorded here for now. Document dates do not independently verify documents or payment.</p></section>${editable?`<section class="detail-section"><h3>Next actions</h3>${r.actions.filter(a=>a.status!=='resolved').map(a=>`<div class="finding">${icon('clock')}<div><p>${esc(a.next_action)}</p><small>${esc(statusNames[a.status])} · ${esc(a.team_label)} / ${esc(a.responsible)} · ${esc(a.source)} · Reminder to: Owner</small></div></div>`).join('')||'<p class="detail-note">No calculated follow-ups.</p>'}</section><section class="detail-section"><h3>Completion checklist</h3>${r.closure_missing.length?`<p class="detail-note">Still needed: ${r.closure_missing.map(esc).join('; ')}.</p>`:notice('Closure requirements recorded. Use Update job to confirm Completed.')}</section>`:''}${pendingReport(r)}<section class="detail-section"><h3>Original comment</h3><div class="comment-box">${esc(r.comments||'No source comment.')}</div></section><section class="detail-section"><h3>Review findings</h3>${r.issues.map(i=>`<div class="finding">${icon(i.severity==='info'?'info':'warning')}<div><p>${esc(i.message)}</p><small>${esc(i.source||'Original import')} · ${esc(i.field||'Record')}</small></div></div>`).join('')||'<p class="detail-note">No automated findings. Owner entries are not independent verification.</p>'}</section>`;
+    body.innerHTML=`${notice(esc(r.state_note),!o?.reconciled)}<div class="detail-facts">${[['Terminal',r.terminal],['Shipping line',r.liner],['Containers',r.container_count],['Pending warehouse',r.pending_count],['Delivery location',r.delivery_location],['Field Agent',r.field_agent??r.handler],['Reminder recipient','Owner'],['C Number / SGD',r.sgd]].map(([l,v])=>`<div class="fact"><span>${l}</span><strong>${esc(v??'Not established')||'Not recorded'}</strong></div>`).join('')}</div>${r.assessment?.draft_requirements_cleared?notice('Client approval follow-up cleared: final assessment received date and C Number are recorded. No approval date or approver was inferred.'):''}<section class="detail-section"><h3>Documents & milestones</h3><div class="milestone-grid">${Object.entries(opFields).map(([k,l])=>`<div class="milestone ${d[k]?'recorded':''}"><span class="milestone-label"><i class="milestone-dot"></i>${l}</span><span class="milestone-value ${!d[k]?'missing':''}">${d[k]?date(d[k]):'Not recorded / review'}</span></div>`).join('')}</div><p class="detail-note">Client approval remains part of preparing the final assessment; approval details are not recorded here for now. Document dates do not independently verify documents or payment.</p></section>${editable?`<section class="detail-section"><h3>Next actions</h3>${r.actions.filter(a=>a.status!=='resolved').map(a=>`<div class="finding">${icon('clock')}<div><p>${esc(a.next_action)}</p><small>${esc(statusNames[a.status])} · ${esc(a.team_label)} / ${esc(a.responsible)} · ${esc(a.source)} · Reminder to: Owner</small></div></div>`).join('')||'<p class="detail-note">No calculated follow-ups.</p>'}</section><section class="detail-section"><h3>Completion checklist</h3>${r.closure_missing.length?`<p class="detail-note">Still needed: ${r.closure_missing.map(esc).join('; ')}.</p>`:notice('Closure requirements recorded. Use Update job to confirm Completed.')}</section>`:''}${pendingReport(r)}<section class="detail-section"><h3>Reported comment</h3><div class="comment-box">${esc(r.comments||'No source comment.')}</div></section><section class="detail-section"><h3>Review findings</h3>${r.issues.map(i=>`<div class="finding">${icon(i.severity==='info'?'info':'warning')}<div><p>${esc(i.message)}</p><small>${esc(i.source||'Original import')} · ${esc(i.field||'Record')}</small></div></div>`).join('')||'<p class="detail-note">No automated findings. Owner entries are not independent verification.</p>'}</section>`;
   }
   bindWarehouseBalance(r);
   $('#job-edit')?.addEventListener('submit',e=>{
@@ -383,21 +439,53 @@ function renderDetail(tab='milestones') {
   });
 }
 async function renderActions(version) {
-  const q=new URLSearchParams({queue:state.deskQueue,team:state.deskTeam,status:state.deskStatus});if(state.client)q.set('client_id',state.client);
+  const q=workspaceQuery();q.set('queue',state.deskQueue);q.set('team',state.deskTeam);q.set('status',state.deskStatus);if(state.client)q.set('client_id',state.client);
   const result=await api('/api/actions?'+q);if(version!==state.version)return;
   $('#main').innerHTML=heading()+tabs()+notice('Your coordination desk across all teams. Responsibility is separate from reminder delivery: reminders come to the owner, and sending remains disabled. Historical dates use their report cut-off.')+deskCards(result.queue_counts)+`<section class="panel"><div class="panel-header"><div class="panel-title">${esc(queueNames[state.deskQueue]||'All coordination actions')} <span class="count-tag">${result.actions.length}</span></div><button class="text-link" data-desk-queue="all">Show all actions</button></div><div class="desk-filters">${selectField('desk-team','Responsible team',state.deskTeam,[['','All teams'],...Object.entries(result.teams)])}${selectField('desk-status','Status',state.deskStatus,[['','All active items'],...Object.entries(result.statuses)])}</div><div class="action-items">${result.actions.map(a=>actionMarkup(a,true)).join('')||empty('No items in this queue','Change the team, status or queue filter, or add a coordination item from a shipment.','')}</div></section>`;
   $('#edit-desk-team').addEventListener('change',async e=>{state.deskTeam=e.target.value;await render();});
   $('#edit-desk-status').addEventListener('change',async e=>{state.deskStatus=e.target.value;state.deskQueue='all';await render();});
 }
 
-function addClient() {
-  $('#action-content').innerHTML=`<span class="eyebrow">CLIENT REGISTER</span><h2 id="action-title">Add a client</h2><p>Create the client now. Its source mapping can be reviewed when the report is available.</p><form id="client-form"><div class="field"><label for="client-name">Client name</label><input id="client-name" minlength="2" maxlength="60" required placeholder="e.g. Nestlé"></div><p id="client-error" class="form-error" role="alert"></p><div class="dialog-actions"><button type="button" class="button secondary" data-close-action>Cancel</button><button type="submit" class="button primary">Add client</button></div></form>`;
+async function renderClients(version) {
+  const query=workspaceQuery(false);query.set('include_hidden','1');
+  const result=await api('/api/clients?'+query);if(version!==state.version)return;
+  state.managedClients=result.clients;
+  $('#main').innerHTML=heading()+notice('Hidden clients leave the normal navigation, shipment views and report lists. Their jobs and source history stay intact. Restore a client here to bring it back. Clients stay linked to their existing jobs when you rename or move them.')+`<section class="panel"><div class="panel-header"><div class="panel-title">Client directory <span class="count-tag">${result.clients.length}</span></div><span class="report-label">Including hidden clients</span></div>${result.clients.length?`<div class="table-scroll"><table class="shipments-table client-directory"><thead><tr><th>Client</th><th>Department</th><th>Visibility</th><th>Jobs</th><th>Actions</th></tr></thead><tbody>${result.clients.map(c=>`<tr><td><strong>${esc(c.name)}</strong>${c.notes?`<span class="cargo-description">${esc(c.notes)}</span>`:''}<small class="directory-id">${esc(c.import_profile?'CSV imports available':'Manual entry only')}</small></td><td>${esc(c.department_name)}</td><td><span class="badge ${c.hidden?'preview':''}">${c.hidden?'Hidden':'Visible'}</span></td><td>${number(c.shipment_count)}</td><td><button class="button secondary" data-edit-client="${c.id}">${c.hidden?'Edit / restore':'Edit client'}</button></td></tr>`).join('')}</tbody></table></div>`:empty('No clients in this department','Add a client, or choose another department above.','','') }</section>`;
+}
+async function directorySave(form,path,payload) {
+  const button=$('button[type=submit]',form),error=$('.directory-error',form);
+  const signature=JSON.stringify(payload);
+  if(signature!==form.commandSignature){form.commandSignature=signature;form.commandId=crypto.randomUUID();}
+  button.disabled=true;error.textContent='';
+  try {
+    const result=await api(path,{...payload,command_id:form.commandId});
+    if(result.department)state.department=String(result.department.id);
+    $('#action-dialog').close();await refreshMeta();await render();
+    toast(result.department?'Department created. Add or move clients into it.':'Client saved. Existing jobs and report history retained.');
+  }catch(errorMessage){error.textContent=errorMessage.message;button.disabled=false;}
+}
+function addClient() {clientForm(null);}
+async function editClient(identifier) {
+  const result=await api('/api/clients?include_hidden=1&client_id='+identifier);
+  if(!result.clients.length){toast('Client not found. Reload the directory.');return;}
+  clientForm(result.clients[0]);
+}
+function clientForm(client) {
+  $('#action-dialog').classList.add('wide');
+  const selected=String(client?.department_id||state.department||state.departments.find(d=>d.name==='FMCG 1')?.id||'');
+  $('#action-content').innerHTML=`<span class="eyebrow">CLIENT DIRECTORY</span><h2 id="action-title">${client?'Edit client':'Add client'}</h2><p>Renaming or moving a client keeps its job IDs, report mapping and history.</p><form id="client-form"><div class="form-grid">${inputField('name','Client name',client?.name||'','text','required maxlength="60"')}${selectField('department_id','Assigned department',selected,state.departments.map(d=>[String(d.id),d.name]))}<div class="field"><label for="client-notes">Client notes</label><textarea class="client-notes" id="client-notes" name="notes" rows="3" maxlength="2000">${esc(client?.notes||'')}</textarea></div></div>${client?`<label class="checkbox-label"><input name="hidden" type="checkbox" ${client.hidden?'checked':''}> Hide this client from the workspace</label><p class="detail-note">Clear this checkbox to restore a hidden client. Existing jobs are kept.</p>`:''}${inputField('reason','Reason for client change','','text','required maxlength="500"')}<p class="form-error directory-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close-action>Cancel</button><button class="button primary" type="submit">${client?'Save client':'Add client'}</button></div></form>`;
   $('#action-dialog').showModal();
-  $('#client-form').addEventListener('submit',async event=>{
-    event.preventDefault();const button=$('button[type=submit]',event.currentTarget);button.disabled=true;
-    try{await api('/api/clients',{name:$('#client-name').value});$('#action-dialog').close();await refreshMeta();await render();toast('Client added. No shipment data was created.');}
-    catch(error){$('#client-error').textContent=error.message;button.disabled=false;}
+  $('#client-form').addEventListener('submit',event=>{
+    event.preventDefault();const f=event.currentTarget;
+    const values={name:formValue(f,'name'),department_id:Number(formValue(f,'department_id')),notes:formValue(f,'notes')};
+    const payload=client?{revision:client.revision,changes:{...values,hidden:f.elements.namedItem('hidden').checked},reason:formValue(f,'reason')}:{...values,reason:formValue(f,'reason')};
+    directorySave(f,client?`/api/clients/${client.id}/update`:'/api/clients',payload);
   });
+}
+function addDepartment() {
+  $('#action-content').innerHTML=`<span class="eyebrow">WORKSPACE ORGANISATION</span><h2 id="action-title">Add department</h2><form id="department-form">${inputField('name','Department name','','text','required maxlength="60" placeholder="e.g. FMCG 2"')}${inputField('reason','Reason for department change','','text','required maxlength="500"')}<p class="form-error directory-error" role="alert"></p><div class="dialog-actions"><button class="button secondary" type="button" data-close-action>Cancel</button><button class="button primary" type="submit">Add department</button></div></form>`;
+  $('#action-dialog').showModal();
+  $('#department-form').addEventListener('submit',event=>{event.preventDefault();const f=event.currentTarget;directorySave(f,'/api/departments',{name:formValue(f,'name'),reason:formValue(f,'reason')});});
 }
 function notificationsInfo() {
   $('#action-content').innerHTML=`<span class="eyebrow">WORKSPACE STATUS</span><h2 id="action-title">Reminders come next.</h2><p>This slice supports test imports and shipment visibility. Hermes, Telegram and scheduled reminders are not connected.</p><p class="detail-note">The planned owner schedule is 08:00 and 16:00 Africa/Lagos. No outbound notifications are active.</p><div class="dialog-actions"><button class="button primary" data-close-action>Understood</button></div>`;$('#action-dialog').showModal();
@@ -422,6 +510,9 @@ document.addEventListener('click',async event=>{
     if(button?.dataset.detailTab){renderDetail(button.dataset.detailTab);return;}
     if(button?.hasAttribute('data-close-detail')){$('#detail-dialog').close();return;}
     if(button?.hasAttribute('data-close-action')){$('#action-dialog').close();return;}
+    if(button?.dataset.editClient){await editClient(button.dataset.editClient);return;}
+    if(button?.id==='new-client'){addClient();return;}
+    if(button?.id==='new-department'){addDepartment();return;}
     if(button?.id==='new-job'){newJob();return;}
     if(button?.id==='apply-import'){confirmApply();return;}
     if(button?.id==='retry-load'){await render();return;}
@@ -436,8 +527,21 @@ document.addEventListener('input',event=>{
 });
 $('#action-dialog').addEventListener('close',()=>$('#action-dialog').classList.remove('wide'));
 $('#add-client').addEventListener('click',addClient);
-$('#mobile-menu').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');syncSidebar();});
-matchMedia('(max-width:680px)').addEventListener('change',syncSidebar);
+$('#manage-clients').addEventListener('click',()=>navigate('clients'));
+$('#department-select').addEventListener('change',async event=>{
+  state.department=event.target.value;state.client='';state.batch=null;state.filter='';state.search='';state.pageNumber=1;
+  closeMobileSidebar();
+  try{await refreshMeta();await render();}catch(error){toast(error.message);}
+});
+$('#sidebar-toggle').addEventListener('click',toggleSidebar);
+$('#sidebar-backdrop').addEventListener('click',closeMobileSidebar);
+$('#mobile-menu').addEventListener('click',()=>{$('#sidebar').classList.toggle('open');syncSidebar();if($('#sidebar').classList.contains('open'))$('#sidebar-toggle').focus();});
+sidebarMedia.addEventListener('change',()=>{closeMobileSidebar();});
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&sidebarMedia.matches&&$('#sidebar').classList.contains('open')&&!$('dialog[open]')){
+    event.preventDefault();closeMobileSidebar();
+  }
+});
 $('#notification-info').addEventListener('click',notificationsInfo);
 $('#logout').addEventListener('click',async()=>{try{await api('/api/auth/logout',{});state.csrf=null;state.batch=null;await showAuth();}catch(error){toast(error.message);}});
 $('#detail-dialog').addEventListener('click',event=>{if(event.target===$('#detail-dialog'))$('#detail-dialog').close();});

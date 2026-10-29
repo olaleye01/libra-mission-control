@@ -68,7 +68,7 @@ def derive(record, data, events, operational=False, as_of=None):
     r.update({k: data[k] for k in TEXT_FIELDS})
     r.update(container_count=data['container_count'], operational=operational, operation=copy.deepcopy(data), movements=events)
     r['dates'] = {**record.get('dates', {}), **data['dates']}
-    source = record.get('source_snapshot')
+    source = record.get('current_source_snapshot') or record.get('source_snapshot')
     r['issues'] = copy.deepcopy(source.get('issues', []) if source is not None else record.get('issues', []) if 'operational' not in record else [])
     for i in r['issues']:
         i['source'] = 'Original import'

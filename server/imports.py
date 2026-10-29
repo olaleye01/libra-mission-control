@@ -1,4 +1,4 @@
-"""Map available GZI headings without inventing missing source columns."""
+"""Client-specific report headings; missing source values remain unknown."""
 
 import base64
 import csv
@@ -13,6 +13,7 @@ from collections import Counter
 from pathlib import Path
 
 from store import encode
+from client_scope import active_client, scope
 
 STATES = ["Awaiting arrival", "In clearing", "In delivery", "Delivered", "Completed"]
 DATE_FIELDS = {"pre_alert": 1, "eta": 6, "berth": 7, "paar": 10, "obl": 11,
@@ -68,12 +69,25 @@ def heading(value):
 
 
 ALIASES = {heading(alias): key for key, _, aliases in COLUMNS for alias in aliases}
+CHI_ALIASES = dict(ALIASES)
+# Owner-confirmed CHI meanings. These aliases must not change the GZI interpretation.
+for field, aliases in {
+    'bl': ('BOL/AWB NO',), 'paar': ('PAAR Recd Date',), 'obl': ('OBL Recd Date',),
+    'container_count': ('COUNT COUNT',), 'container_size': ('KG/SIZE',),
+    'duty_receipt': ('Duty Pay Date',), 'exam': ('Custom Exam Date',),
+    'customs_release': ('Custom Rel. Date',), 'tdo': ('TDO / Exit Note Date',),
+    'handler': ('AGENT',), 'mode': ('MODE',),
+}.items():
+    CHI_ALIASES.update({heading(alias): field for alias in aliases})
+PROFILE_IDS = {'GZI': 'gzi-header-v2', 'CHI': 'chi-header-v1'}
 
 
-def map_columns(headers, number, section, allow_sparse=True):
+def map_columns(headers, number, section, allow_sparse=True, profile='GZI'):
+    aliases = CHI_ALIASES if profile == 'CHI' else ALIASES
+    labels = {**LABELS, 'mode': 'Transport mode'}
     positions = {}
     for index, value in enumerate(headers):
-        key = ALIASES.get(heading(value))
+        key = aliases.get(heading(value))
         if key:
             positions.setdefault(key, []).append(index)
     if 'bl' not in positions:
@@ -84,14 +98,14 @@ def map_columns(headers, number, section, allow_sparse=True):
         raise ValueError('Bill of Lading heading repeats at row '+str(number)+'. Give the job identifier column a unique heading.')
     # Duplicate headings carry no reliable choice of source column. Retain both for review.
     mapped = {k: v[0] for k, v in positions.items() if len(v) == 1}
-    ambiguous = [{'field': k, 'label': LABELS[k], 'columns': [i+1 for i in v]} for k, v in positions.items() if len(v) > 1]
+    ambiguous = [{'field': k, 'label': labels[k], 'columns': [i+1 for i in v]} for k, v in positions.items() if len(v) > 1]
     return {'header_row': number, 'section': section, 'positions': mapped,
-            'mapped': [{'field': k, 'label': LABELS[k], 'column': i+1, 'header': headers[i]} for k, i in mapped.items()],
+            'mapped': [{'field': k, 'label': labels[k], 'column': i+1, 'header': headers[i]} for k, i in mapped.items()],
             'pending': [{'field': k, 'label': label, 'reason': 'ambiguous heading' if k in positions else 'column not supplied'}
                         for k, label, _ in COLUMNS if k not in mapped and k != 'serial'],
             'ambiguous': ambiguous,
             'unmapped': [{'column': i+1, 'header': value or 'Unnamed column'} for i, value in enumerate(headers)
-                         if heading(value) not in ALIASES]}
+                         if heading(value) not in aliases]}
 
 
 def parse_date(raw):
@@ -119,7 +133,9 @@ def parse_date(raw):
     return None, "Ambiguous date or note; original retained for review."
 
 
-def preview_csv(content, report_date=None):
+def preview_csv(content, report_date=None, profile='GZI'):
+    if profile not in PROFILE_IDS:
+        raise ValueError('This client needs a reviewed report mapping.')
     if not content or len(content) > 5 * 1024 * 1024:
         raise ValueError("Upload a non-empty CSV of at most 5 MB.")
     try:
@@ -139,7 +155,7 @@ def preview_csv(content, report_date=None):
             continue
         serial_index = current['positions'].get('serial') if current else None
         numbered_data = serial_index is not None and serial_index < len(raw) and raw[serial_index].strip().isdigit()
-        candidate = None if numbered_data else map_columns(raw, number, section, allow_sparse=current is None)
+        candidate = None if numbered_data else map_columns(raw, number, section, allow_sparse=current is None, profile=profile)
         if candidate:
             current, section_header = candidate, raw
             reference_section = False
@@ -181,6 +197,8 @@ def preview_csv(content, report_date=None):
         def issue(code, message, field=None, severity="warning"):
             issues.append({"code": code, "message": message, "field": field, "severity": severity})
 
+        mode = supplied('mode').strip().upper() if profile == 'CHI' else ''
+        sea = mode in ('SEA', 'SEA FREIGHT', 'SEAFREIGHT')
         missing_columns = [item['field'] for item in current['pending']]
         blank_fields = [key for key in positions if key != 'serial' and not supplied(key).strip()]
         if missing_columns:
@@ -190,6 +208,9 @@ def preview_csv(content, report_date=None):
         dates = {}
         for field, col in DATE_FIELDS.items():
             value, error = parse_date(cells[col])
+            if profile == 'CHI' and not sea and field in ('berth', 'tdo'):
+                # ATA and the shared TDO/Exit Note heading are mode-dependent, not warehouse evidence.
+                value = None
             dates[field] = value
             if error and cells[col].strip().lower() not in MISSING:
                 issue("date_review", error, field, "info" if field == "exam" and cells[col].strip().upper() == "AEO" else "warning")
@@ -206,6 +227,9 @@ def preview_csv(content, report_date=None):
                 issue("count_conflict", "Count column disagrees with the count in container size.", "containers")
             elif count is None:
                 count = parsed_count
+        if profile == 'CHI' and not sea:
+            count, size = None, None
+            issue('transport_mode_review', 'Non-sea or unknown mode: ATA, TDO/exit note and weight/count cells are retained for review, not converted to sea milestones or container quantities.', 'mode')
         if not count or not size:
             issue("container_review", "Container count or size is missing or ambiguous.", "containers")
         if not cells[22].strip():
@@ -253,6 +277,14 @@ def preview_csv(content, report_date=None):
                         "blank_fields": blank_fields, "unresolved_fields": unresolved_fields,
                         "pending_fields": list(dict.fromkeys(missing_columns + blank_fields + unresolved_fields)),
                         "evidence": "Historical report · not independently verified"})
+        if profile == 'CHI':
+            records[-1]['transport_mode'] = mode
+            records[-1]['report_details'] = {
+                'mode': mode, 'kg_size_raw': supplied('container_size'),
+                'count_raw': supplied('container_count'),
+                'arrival_date_reported': parse_date(supplied('berth'))[0],
+                'exit_note_date_reported': parse_date(supplied('tdo'))[0] if mode == 'AIR' else None,
+            }
     if not mappings:
         raise ValueError("No recognized Bill of Lading heading found. Include BL, BOL NO or Bill of Lading; other columns are optional.")
     if not records:
@@ -287,11 +319,10 @@ def stage(app, client_id, filename, content, report_date, ApiError):
     if not filename.lower().endswith(".csv"):
         raise ApiError(400, "Select a CSV file.")
     with app.store.connect() as con:
-        client = con.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
-    if not client:
-        raise ApiError(404, "Client not found.")
-    if client["name"].upper() != "GZI":
-        raise ApiError(422, "Only the GZI mapping has been reviewed. Additional client mappings follow later.")
+        client = active_client(con, client_id)
+    profile = next((name for name, identifier in PROFILE_IDS.items() if identifier == client['import_profile']), None)
+    if profile is None:
+        raise ApiError(422, "GZI and CHI report mappings are available. This client still needs a reviewed mapping.")
     sha = hashlib.sha256(content).hexdigest()
     with app.store.connect() as con:
         existing = con.execute("SELECT * FROM batches WHERE client_id=? AND sha256=?", (client_id, sha)).fetchone()
@@ -300,7 +331,7 @@ def stage(app, client_id, filename, content, report_date, ApiError):
             raise ApiError(409, "This source already has a preview with a different reporting date. Use that saved preview.")
         return existing["id"], True
     try:
-        records, summary = preview_csv(content, report_date)
+        records, summary = preview_csv(content, report_date, profile)
     except ValueError as exc:
         raise ApiError(400, str(exc))
     batch_id = uuid.uuid4().hex
@@ -322,7 +353,7 @@ def stage(app, client_id, filename, content, report_date, ApiError):
                 raise ApiError(409, "This source already has a preview with a different reporting date.")
             return existing["id"], True
         con.execute("""INSERT INTO batches(id,client_id,filename,sha256,report_date,created_at,summary,mapping)
-            VALUES(?,?,?,?,?,?,?,?)""", (batch_id, client_id, filename, sha, report_date, time.time(), encode(summary), "gzi-header-v2"))
+            VALUES(?,?,?,?,?,?,?,?)""", (batch_id, client_id, filename, sha, report_date, time.time(), encode(summary), PROFILE_IDS[profile]))
         con.executemany("INSERT INTO import_rows VALUES(?,?,?,?)",
                         ((batch_id, r["source_row"], encode(r["raw"]), encode(r)) for r in records))
         app.store.audit(con, "import_preview_created", {"batch_id": batch_id, "sha256": sha, "rows": len(records)})
@@ -347,8 +378,12 @@ def register(route, ApiError):
 
     @route("GET", "/api/imports")
     def listing(req, query, body):
+        selection = scope(query)
         with req.app.store.connect() as con:
-            rows = con.execute("SELECT b.*,c.name AS client_name FROM batches b JOIN clients c ON c.id=b.client_id ORDER BY b.created_at DESC").fetchall()
+            rows = con.execute("SELECT b.*,c.name AS client_name,c.department_id,c.hidden AS client_hidden FROM batches b JOIN clients c ON c.id=b.client_id ORDER BY b.created_at DESC").fetchall()
+            rows = [r for r in rows if (selection['include_hidden'] or not r['client_hidden'])
+                    and (selection['department_id'] is None or r['department_id'] == selection['department_id'])
+                    and (selection['client_id'] is None or r['client_id'] == selection['client_id'])]
         return {"imports": [dict(r, summary=json.loads(r["summary"])) for r in rows]}
 
     @route("GET", "/api/imports/<id>")
@@ -385,8 +420,13 @@ def register(route, ApiError):
             batch = con.execute("SELECT * FROM batches WHERE id=?", (batch_id,)).fetchone()
             if not batch:
                 raise ApiError(404, "Import not found.")
+            active_client(con, batch['client_id'])
             reused = batch["status"] == "applied"
             if not reused:
+                from report_updates import plan
+                review = plan(con, batch_id)
+                if review['counts']['update'] or review['counts']['review']:
+                    raise ApiError(409, 'This report contains existing BLs. Review report updates before applying; no duplicates were created.')
                 con.execute("""INSERT INTO shipments(client_id,batch_id,source_row,created_at)
                     SELECT ?,batch_id,source_row,? FROM import_rows WHERE batch_id=?""",
                             (batch["client_id"], time.time(), batch_id))

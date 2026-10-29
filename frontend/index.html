@@ -32,23 +32,24 @@
 
   <div id="app" class="app" hidden>
     <aside id="sidebar" class="sidebar">
-      <a class="brand" href="/" aria-label="Libra overview"><span class="brand-symbol">L</span><span>libra<span class="brand-caption">MISSION CONTROL</span></span></a>
-      <div class="workspace-tag"><span class="small-mark">LC</span><div>Libra Circle<small>Clearing operations</small></div><span class="workspace-chevron">⌄</span></div>
+      <div class="sidebar-header"><a class="brand" href="/" aria-label="Libra overview"><span class="brand-symbol">L</span><span class="brand-wordmark">libra<span class="brand-caption">MISSION CONTROL</span></span></a><button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-controls="sidebar" aria-expanded="true"><span data-icon="sidebarCollapse"></span></button></div>
+      <div class="workspace-tag"><span class="small-mark">LC</span><div class="workspace-info"><strong>Libra Circle</strong><label for="department-select" class="visually-hidden">Department</label><select id="department-select" aria-label="Department"><option>FMCG 1</option></select></div></div>
       <span class="nav-label">WORKSPACE</span>
       <nav aria-label="Main navigation">
-        <button class="nav-item active" data-page="overview"><span data-icon="overview"></span>Overview</button>
-        <button class="nav-item" data-page="shipments"><span data-icon="ship"></span>Shipments<span id="nav-total" class="nav-count">0</span></button>
-        <button class="nav-item" data-page="imports"><span data-icon="upload"></span>Import centre<span id="nav-imports" class="nav-count">0</span></button>
-        <button class="nav-item" data-page="actions"><span data-icon="clock"></span>Import Officer desk</button>
-        <button class="nav-item" data-page="qac"><span data-icon="shield"></span>QAC review<span id="nav-qac" class="nav-count amber">0</span></button>
+        <button class="nav-item active" data-page="overview" title="Overview"><span data-icon="overview"></span><span class="nav-text">Overview</span></button>
+        <button class="nav-item" data-page="shipments" title="Shipments"><span data-icon="ship"></span><span class="nav-text">Shipments</span><span id="nav-total" class="nav-count">0</span></button>
+        <button class="nav-item" data-page="imports" title="Import centre"><span data-icon="upload"></span><span class="nav-text">Import centre</span><span id="nav-imports" class="nav-count">0</span></button>
+        <button class="nav-item" data-page="actions" title="Import Officer desk"><span data-icon="clock"></span><span class="nav-text">Import Officer desk</span></button>
+        <button class="nav-item" data-page="qac" title="QAC review"><span data-icon="shield"></span><span class="nav-text">QAC review</span><span id="nav-qac" class="nav-count amber">0</span></button>
       </nav>
-      <div class="nav-heading"><span class="nav-label">YOUR CLIENTS</span><button id="add-client" class="icon-button" aria-label="Add client">+</button></div>
+      <div class="nav-heading"><span class="nav-label">YOUR CLIENTS</span><div class="client-heading-actions"><button id="manage-clients" class="icon-button" type="button" aria-label="Manage clients" title="Manage clients"><span data-icon="clients"></span></button><button id="add-client" class="icon-button" aria-label="Add client" title="Add client">+</button></div></div>
       <div id="sidebar-clients" class="sidebar-clients"></div>
       <div class="sidebar-bottom">
         <div class="connection-note"><span data-icon="link"></span><strong>Hermes connection</strong><small>Not connected yet</small></div>
         <div class="sidebar-footer"><span class="owner-avatar">O</span><div>Owner workspace<small>Local access</small></div><button id="logout" class="icon-button" aria-label="Sign out"><span data-icon="logout"></span></button></div>
       </div>
     </aside>
+    <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close navigation" tabindex="-1" hidden></button>
     <div class="main-shell">
       <header class="topbar"><div class="breadcrumbs"><button id="mobile-menu" class="icon-button mobile-only" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="false">☰</button><span>Operations</span><span class="slash">/</span><strong id="breadcrumb">Overview</strong></div><div class="topbar-right"><span class="local-connected"><i></i>Local API connected</span><span class="top-divider"></span><button id="notification-info" class="icon-button notification-button" aria-label="Notification status"><span data-icon="bell"></span></button><span class="owner-avatar light">O</span></div></header>
       <main id="main" tabindex="-1"></main>

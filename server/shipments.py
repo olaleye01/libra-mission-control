@@ -5,6 +5,7 @@ from imports import STATES
 from records import records
 from operations import date, choice
 from coordination import TEAMS, STATUSES, QUEUES, counts
+from client_scope import filtered
 
 
 def all_records(app, client_id=None, as_of=None):
@@ -21,7 +22,7 @@ def register(route, ApiError):
 
     @route("GET", "/api/overview")
     def overview(req, query, body):
-        records = all_records(req.app, client_filter(query))
+        records = filtered(all_records(req.app, client_filter(query)), query)
         states = Counter(r["state"] for r in records)
         terminal_counts = Counter(r["terminal"] for r in records)
         return {"total": len(records), "states": {s: states[s] for s in STATES},
@@ -36,7 +37,7 @@ def register(route, ApiError):
 
     @route("GET", "/api/shipments")
     def listing(req, query, body):
-        records = all_records(req.app, client_filter(query))
+        records = filtered(all_records(req.app, client_filter(query)), query)
         state = query.get("state", "")
         if state and state not in STATES:
             raise ApiError(400, "Unknown shipment state.")
@@ -56,7 +57,7 @@ def register(route, ApiError):
             raise ApiError(400, "Page and limit must be integers.")
         total = len(records)
         selected = records[(page-1)*limit:page*limit]
-        return {"shipments": [{k: v for k, v in r.items() if k not in ("raw", "source_snapshot", "movements", "operation")} for r in selected],
+        return {"shipments": [{k: v for k, v in r.items() if k not in ("raw", "source_snapshot", "current_source_snapshot", "effective_source", "report_history", "movements", "operation")} for r in selected],
                 "total": total, "page": page, "limit": limit}
 
     @route("GET", "/api/shipments/<id>")
@@ -78,7 +79,7 @@ def register(route, ApiError):
     @route("GET", "/api/actions")
     def actions(req, query, body):
         as_of = date(query.get("as_of"))
-        jobs = all_records(req.app, client_filter(query), as_of)
+        jobs = filtered(all_records(req.app, client_filter(query), as_of), query)
         team = choice(query.get('team', ''), ('', *TEAMS), 'team filter')
         status = choice(query.get('status', ''), ('', *STATUSES), 'status filter')
         queue = choice(query.get('queue', 'all'), ('all', *QUEUES), 'queue filter')

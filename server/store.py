@@ -20,11 +20,11 @@ class Store:
         if self.path.exists() and self.path.stat().st_size:
             # SQLite's backup API includes committed WAL pages; copying just the DB can lose imports.
             with sqlite3.connect(self.path) as source:
-                needs_upgrade = not source.execute("SELECT 1 FROM migrations WHERE version=2").fetchone()
+                needs_upgrade = not source.execute("SELECT 1 FROM migrations WHERE version=5").fetchone()
                 if needs_upgrade:
                     backups = self.directory / "backups"
                     backups.mkdir(mode=0o700, exist_ok=True)
-                    backup = backups / ("before-slice2-" + str(time.time_ns()) + ".sqlite3")
+                    backup = backups / ("before-upgrade-" + str(time.time_ns()) + ".sqlite3")
                     with sqlite3.connect(backup) as target:
                         source.backup(target)
                     backup.chmod(0o600)
@@ -56,9 +56,10 @@ class Store:
                     action TEXT NOT NULL, detail TEXT NOT NULL);
                 INSERT OR IGNORE INTO migrations VALUES(1);
             """)
-            for name in ("GZI", "Dangote", "CHI"):
-                con.execute("INSERT OR IGNORE INTO clients(name,created_at) VALUES(?,?)",
-                            (name, time.time()))
+            # Seeding by display name on every start recreated a client after renaming it.
+            if con.execute('SELECT COUNT(*) FROM clients').fetchone()[0] == 0:
+                for name in ("GZI", "Dangote", "CHI"):
+                    con.execute("INSERT INTO clients(name,created_at) VALUES(?,?)", (name, time.time()))
             # v1 required an import for every job. Manual jobs have no source row.
             if con.execute("SELECT COUNT(*) FROM migrations WHERE version=2").fetchone()[0] == 0:
                 con.execute("ALTER TABLE shipments RENAME TO shipments_v1")
@@ -81,7 +82,38 @@ class Store:
                 CREATE TABLE IF NOT EXISTS commands(
                     id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, response TEXT NOT NULL);
                 INSERT OR IGNORE INTO migrations VALUES(3);
+                CREATE TABLE IF NOT EXISTS report_updates(
+                    id INTEGER PRIMARY KEY, shipment_id INTEGER NOT NULL REFERENCES shipments(id),
+                    batch_id TEXT NOT NULL, source_row INTEGER NOT NULL, effective_record TEXT NOT NULL,
+                    created_at REAL NOT NULL, UNIQUE(batch_id,source_row),
+                    FOREIGN KEY(batch_id,source_row) REFERENCES import_rows(batch_id,source_row));
+                CREATE TABLE IF NOT EXISTS shipment_aliases(
+                    shipment_id INTEGER PRIMARY KEY REFERENCES shipments(id),
+                    canonical_id INTEGER NOT NULL REFERENCES shipments(id),
+                    reason TEXT NOT NULL, created_at REAL NOT NULL);
+                INSERT OR IGNORE INTO migrations VALUES(4);
+                CREATE TABLE IF NOT EXISTS departments(
+                    id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    created_at REAL NOT NULL);
             """)
+            con.execute('BEGIN IMMEDIATE')
+            if not con.execute('SELECT 1 FROM migrations WHERE version=5').fetchone():
+                con.execute("INSERT OR IGNORE INTO departments(name,created_at) VALUES('FMCG 1',?)", (time.time(),))
+                department = con.execute("SELECT id FROM departments WHERE name='FMCG 1'").fetchone()[0]
+                con.execute('ALTER TABLE clients ADD COLUMN department_id INTEGER REFERENCES departments(id)')
+                con.execute('ALTER TABLE clients ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0 CHECK(hidden IN (0,1))')
+                con.execute("ALTER TABLE clients ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
+                con.execute('ALTER TABLE clients ADD COLUMN revision INTEGER NOT NULL DEFAULT 1')
+                con.execute('ALTER TABLE clients ADD COLUMN import_profile TEXT')
+                con.execute('UPDATE clients SET department_id=?', (department,))
+                con.execute("""UPDATE clients SET import_profile=CASE UPPER(TRIM(name))
+                    WHEN 'GZI' THEN 'gzi-header-v2' WHEN 'CHI' THEN 'chi-header-v1' END""")
+                self.audit(con, 'client_departments_initialised', {
+                    'department_id': department, 'department_name': 'FMCG 1',
+                    'client_ids': [r[0] for r in con.execute('SELECT id FROM clients ORDER BY id')],
+                    'reason': 'Initial department assignment requested by the owner; existing identities and jobs retained.'
+                }, actor='migration')
+                con.execute('INSERT INTO migrations VALUES(5)')
         os.chmod(self.path, 0o600)
 
     @contextlib.contextmanager

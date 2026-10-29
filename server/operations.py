@@ -8,6 +8,7 @@ import time
 import uuid
 
 from core import ApiError
+from client_scope import active_client
 from records import records
 from coordination import TEAMS, STATUSES, CATEGORIES, BLOCK_STEPS, holds
 from store import encode
@@ -247,6 +248,7 @@ def execute(app, operation, body, identifier=None):
             client_id = body.get('client_id')
             if type(client_id) is not int or not con.execute('SELECT 1 FROM clients WHERE id=?', (client_id,)).fetchone():
                 raise ApiError(400, 'Select an existing client.')
+            active_client(con, client_id)
             data = initial({}, True)
             patch(data, body.get('changes', {}))
             record = {'dates': {}, 'issues': [], 'comments': '', 'client_id': client_id, 'batch_id': None}

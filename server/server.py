@@ -32,7 +32,7 @@ class Application:
         self.auth = Auth(self.store)
         self.source_dir = Path(source_dir or ROOT / "imports" / "sources").resolve()
         self.routes = []
-        for module in ("auth", "clients", "imports", "shipments", "operations"):
+        for module in ("auth", "clients", "imports", "shipments", "operations", "report_updates"):
             importlib.import_module(module).register(self.route, ApiError)
 
     def route(self, method, path, public=False):

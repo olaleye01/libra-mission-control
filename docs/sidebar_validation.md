@@ -1,0 +1,7 @@
+# Sidebar toggle validation
+
+Added an accessible toggle in the sidebar header. Desktop navigation collapses to a 76px rail and expands again; icons retain accessible names and native tooltips. Client initials remain selectable. The desktop preference is stored locally with a guarded storage fallback. Sidebar content scrolls on short screens.
+
+Mobile navigation retains the existing menu opener and adds a close control and backdrop. Background content becomes inert while the sidebar is open. Escape, the close control and backdrop dismiss it and restore focus to the menu opener. Navigating to a page or client also closes it. Desktop preference is independent of the mobile open state. Reduced-motion settings remain respected.
+
+All 89 unit/API regressions passed with the private CHI fixture supplied. JavaScript syntax and Git whitespace checks passed. Isolated browser QA verified desktop collapse, compact navigation, persistence after reload, keyboard Enter expansion, a 390px mobile viewport, Escape dismissal, backdrop dismissal, focus restoration, client navigation and desktop preference restoration after resizing. Temporary viewport overrides were reset. Screenshots are private under ignored docs/screenshots; QA used a separate localhost workspace and did not change normal credentials, records or browser sidebar preferences. No API or database changes were needed for this feature.

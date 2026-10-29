@@ -16,6 +16,8 @@ Open [http://127.0.0.1:8800](http://127.0.0.1:8800). On first use, create your o
 
 The service binds only to 127.0.0.1. This is local development software, not a deployed Dokploy service. Public/reverse-proxy deployment needs a separate reviewed access/network configuration. Do not bind it publicly or reuse the temporary browser-QA password for owner access.
 
+Use the button beside the Libra logo to collapse the sidebar into a compact navigation rail or expand it again. The desktop choice is remembered in this browser. On phones, use the menu button to open navigation; close it with the sidebar close button, Escape, or a tap outside.
+
 Optional arguments:
 
 ```bash
@@ -27,27 +29,33 @@ The default data directory is this project's `data/`. A different data directory
 ## Try the first import
 
 1. Sign in, then select **Import centre**.
-2. Choose the available GZI report, or upload a UTF-8 CSV up to 5 MB. Select GZI as the client. Other client records are supported, but their import mappings are not yet implemented.
+2. Upload a UTF-8 CSV up to 5 MB and select the matching client. GZI and CHI report mappings are supported. Other client records can be used for manual jobs while their report mappings await review.
 3. Leave the reporting cut-off blank if it is unknown. Do not infer it from the filename.
 4. Build a preview. The GZI importer maps recognized headings in any order; only a recognized BL heading and BL value are needed to identify a shipment. Open **Mapped columns & pending fields** to see what was mapped and what is still to supply. Missing columns, present-but-blank cells and uninterpretable dates remain distinct. Repeated headings and unknown columns are retained for review rather than guessed. Click any BL to inspect milestones, pending information and actual original headings/cells.
-5. Select **Apply to test register** and explicitly acknowledge that this is a historical test import. Preview alone never populates the register.
+5. Select **Apply to test register**, review which rows update existing jobs or create new ones, enter a reason and explicitly acknowledge that this is a historical test import. Preview alone never populates the register.
 6. Browse Overview, Shipments and QAC review. Search by BL, client, terminal, cargo, handler or SGD, filter by client/state, and inspect source/history in shipment details.
 
 If supplied locally, `imports/sources/GZI-report-26-10-26.csv` is offered as a source without another upload. This private CSV is ignored by Git and is not part of the public assets. A checkout without private data still supports uploads and generated test fixtures.
 
 Repeated section headers can contain different columns. The GZI rate-table footer is excluded, and missing BL values are reported when a source serial identifies a skipped row. Existing saved previews retain their original interpretation; the flexible heading mapping applies to new previews.
 
-Every accepted upload is preserved byte-for-byte in `data/originals/<sha256>.csv`. Imported snapshots retain physical CSV row, section, raw cells, normalized values and findings. Repeated BLs are kept as separate records. Re-uploading the same bytes for the same client opens the existing batch. Applying it again is idempotent. Existing applied records are never silently overwritten by a later upload.
+Every accepted upload is preserved byte-for-byte in `data/originals/<sha256>.csv`. Imported snapshots retain physical CSV row, section, raw cells, normalized values and findings. Repeated BLs are kept as separate records. Re-uploading the same bytes for the same client opens the existing batch. Applying it again is idempotent. Changed reports use a reviewed match on client plus BL: a unique match updates the same job ID, and unmatched BLs create new jobs. Repeated or ambiguous BLs require manual review. Missing, blank or uninterpretable source fields do not clear known values; independent owner edits remain in place. Earlier source snapshots and every accepted CSV stay in history.
+
+## Updated reports and existing duplicates
+
+Open a report in **Import centre** and select **Review report updates** (available on applied reports too). The review lists updates, new jobs, already-linked rows, changed fields and owner values retained. Ambiguous matches, older reports and operational validation conflicts block the whole application. A changed review requires reopening it before applying. Jobs missing from the new file are not deleted.
+
+For duplicates created by the earlier importer, the same review can attach the later source to the earlier job and archive the extra register row, provided that extra row has no independent edits, movements or report history. Both source rows remain stored; active counts show the job once. The review never combines two independently worked jobs. Source & history shows the original source, subsequent reports and audited changes.
 
 ## Source proposals and owner updates
 
-The five labels are Awaiting arrival, In clearing, In delivery, Delivered and Completed. Imported stages are explicitly **historical proposals**, not verified live status. GZI's ATD column maps to actual berthing in Nigeria; other clients need reviewed mappings. A dated ECD can support a Delivered proposal, but it does not invent a delivery date or establish Completed. Partial-delivery notes are flagged; pending quantities stay unknown unless established by later operational entry.
+The five labels are Awaiting arrival, In clearing, In delivery, Delivered and Completed. Imported stages are explicitly **historical proposals**, not verified live status. GZI's ATD column and CHI's ATA column for SEA rows map to actual berthing in Nigeria. CHI's Duty Pay Date means duty receipt received, per owner confirmation; it does not independently verify payment. Other clients need reviewed mappings. A dated ECD can support a Delivered proposal, but it does not invent a delivery date or establish Completed. Partial-delivery notes are flagged; pending quantities stay unknown unless established by later operational entry.
 
 DO, Customs release, TDO, gate-out and factory arrival remain distinct. The importer flags missing prerequisites and inconsistent dates while preserving reported facts. It does not certify release readiness or verify container coverage. Draft assessment is part of obtaining client approval to proceed with final assessment, not a separately required receipt milestone. Client approval dates and approvers are not captured in the current dashboard; any earlier entries remain preserved. No draft receipt date is needed. Assessment Date means final assessment received. That date plus C Number (SGD/SDG) clears draft-stage requests without inventing approval dates or an approver. Either alone does not trigger that pair rule. Receipt dates and owner-reported paid statuses do not independently verify payment.
 
 ## Work with a shipment
 
-Select **Create shipment** to enter a job for any client. Client and BL are explicit; matching BLs are never merged. Creating a separate job with an existing client/BL requires a duplicate reason. Each job has an internal LMC ID. Its optional **Delivery location** field holds the intended client warehouse or delivery address (up to 500 characters). It is available when creating or updating a job and appears in the shipment summary. Entering a destination does not confirm delivery.
+Select **Create shipment** to enter a job for any client. Client and BL are explicit. Matching report revisions update a job only after a unique client/BL match is reviewed; repeated BLs within a report remain distinct. Creating a separate job with an existing client/BL requires a duplicate reason. Each job has an internal LMC ID. Its optional **Delivery location** field holds the intended client warehouse or delivery address (up to 500 characters). It is available when creating or updating a job and appears in the shipment summary. Entering a destination does not confirm delivery.
 
 Open a job and use its tabs:
 
@@ -93,3 +101,17 @@ node --check frontend/app.js
 Tests use temporary storage and ephemeral loopback ports. They cover importer mapping, duplicate preservation, historical status evidence, partial delivery, release gaps, counts, malformed files, authentication, origin/Host checks, CSRF, file boundaries, repeated imports, confirmation, persistence, client filters and audit history. The operational suite also covers assessment clearance, count/release prerequisites, exceptions, duplicate loads, corrections, completion gates, calendar boundaries, concurrent revisions, migration backups and persistence. Real-source reconciliation is skipped if the private CSV is not available.
 
 See `docs/api.md` for the lightweight API contract. Private planning notes, verification screenshots and client reports remain local and are excluded from the repository.
+
+## CHI report mapping
+
+CHI has its own `chi-header-v1` profile: BOL/AWB NO identifies the job, COUNT COUNT means container count, and KG/SIZE supplies container size for SEA rows. PAAR Recd Date, OBL Recd Date, Custom Exam Date, Custom Rel. Date and AGENT map to their corresponding fields. Duty Pay Date is the owner-confirmed duty-receipt date. ATA means berthing and TDO / Exit Note Date means TDO for SEA rows. Non-sea/unknown modes keep arrival, exit-note and weight/count cells for review without converting them into sea berthing, TDO or container quantities. Regulatory, supplier, client-reference and clearing-type columns remain in original source data; no regulatory obligations are inferred. Optional columns, source preservation and reviewed updates use the same safeguards as GZI.
+
+## Clients and departments
+
+All existing pilot clients initially belong to **FMCG 1**. Use the Department selector in the sidebar to switch between a department and All departments. The selector scopes visible clients, shipment totals, QAC queues, actions and report history.
+
+Select **Manage clients** beside YOUR CLIENTS to open **Clients & departments**. Use **Edit client** to change its name, notes or assigned department, or hide it. Hidden clients leave normal navigation, filters, shipment views and report lists. The directory includes hidden clients: choose **Edit / restore** and clear the hide checkbox to restore them. Existing jobs and source history are retained. New jobs and new report applications require the client to be visible. Owner access to existing job details remains available; hiding and departments are organisation settings, not staff permissions.
+
+Use **Add department** to create a destination for reassignment. New-client forms use the selected department, defaulting to FMCG 1. Renames preserve the client ID and its reviewed CSV profile, so renaming GZI or CHI does not disable imports or create another default client on restart. Names, notes, visibility and reassignment changes are revision checked, transactionally audited and accept idempotent commands.
+
+Migration 5 backs up the application SQLite database before adding department/client metadata and assigning the existing clients to FMCG 1. It preserves job IDs, source rows, operational edits, movements, credentials and sessions.
