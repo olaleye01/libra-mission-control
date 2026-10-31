@@ -20,7 +20,7 @@ class Store:
         if self.path.exists() and self.path.stat().st_size:
             # SQLite's backup API includes committed WAL pages; copying just the DB can lose imports.
             with sqlite3.connect(self.path) as source:
-                needs_upgrade = not source.execute("SELECT 1 FROM migrations WHERE version=5").fetchone()
+                needs_upgrade = source.execute("SELECT COUNT(*) FROM migrations WHERE version IN (5,6)").fetchone()[0] != 2
                 if needs_upgrade:
                     backups = self.directory / "backups"
                     backups.mkdir(mode=0o700, exist_ok=True)
@@ -114,6 +114,18 @@ class Store:
                     'reason': 'Initial department assignment requested by the owner; existing identities and jobs retained.'
                 }, actor='migration')
                 con.execute('INSERT INTO migrations VALUES(5)')
+            con.executescript("""
+                CREATE TABLE IF NOT EXISTS tracking_configs(
+                    shipment_id INTEGER PRIMARY KEY REFERENCES shipments(id),
+                    revision INTEGER NOT NULL, data TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS tracking_checks(
+                    id TEXT PRIMARY KEY, shipment_id INTEGER NOT NULL REFERENCES shipments(id),
+                    config_revision INTEGER NOT NULL, started_at REAL NOT NULL, ended_at REAL,
+                    status TEXT NOT NULL, error TEXT NOT NULL DEFAULT '',
+                    observation TEXT, raw_text TEXT, changes TEXT, review TEXT);
+                CREATE INDEX IF NOT EXISTS tracking_checks_job ON tracking_checks(shipment_id,started_at);
+                INSERT OR IGNORE INTO migrations VALUES(6);
+            """)
         os.chmod(self.path, 0o600)
 
     @contextlib.contextmanager

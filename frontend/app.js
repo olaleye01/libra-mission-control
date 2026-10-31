@@ -27,10 +27,10 @@ const icons = {
 const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.file}</svg>`;
 const states = ['Awaiting arrival','In clearing','In delivery','Delivered','Completed'];
 const names = {overview:'Overview',shipments:'Shipments',imports:'Import centre',qac:'QAC review',actions:'Import Officer desk',clients:'Clients & departments'};
-const fields = {pre_alert:'Pre-alert',eta:'ETA',berth:'Actual berth · ATA/ATD',paar:'PAAR received',obl:'OBL received',assessment:'Final assessment received',duty_receipt:'Duty receipt',exam:'Customs examination',customs_release:'Customs release',do:'Shipping release · DO',tdo:'Terminal Delivery Order',gate_out:'Gate-out',warehouse:'Factory / warehouse arrival',terminal_validity:'Terminal validity',ecd:'ECD received'};
+const fields = {pre_alert:'Pre-alert',eta:'ETA',discharge:'Actual destination discharge',berth:'Actual berth · ATA/ATD',paar:'PAAR received',obl:'OBL received',assessment:'Final assessment received',duty_receipt:'Duty receipt',exam:'Customs examination',customs_release:'Customs release',do:'Shipping release · DO',tdo:'Terminal Delivery Order',gate_out:'Gate-out',warehouse:'Factory / warehouse arrival',terminal_validity:'Terminal validity',ecd:'ECD received'};
 const sourceHeaders = ['S/N','Pre-alert date','Item description','BOL number','Terminal','Shipping line','ETA','ATD · GZI actual berth','Container count','Container size','PAAR date','OBL received','Assessment date','SGD number','Duty received date','Customs exam','Customs release','Shipping release / DO','TDO','Gate-out','Factory arrival (check section header)','Comments','File handler','Remark','Terminal validity','PCA Final Closure','ECD','Clearing income','Haulage income','Projected total income','Clearing cost','Haulage cost','Projected total expenses','Projected profit'];
 const state = {page:'overview',client:'',filter:'',search:'',issues:false,pageNumber:1,clients:[],batches:[],overview:null,csrf:null,batch:null,previewPage:1,previewIssues:false,detail:null,version:0,deskQueue:'all',deskTeam:'',deskStatus:'',department:null,departments:[],managedClients:[]};
-let searchTimer, toastTimer, detailVersion = 0, tableVersion = 0;
+let searchTimer, toastTimer, trackingTimer, overviewTrackingTimer, trackingEpoch=0, detailVersion = 0, tableVersion = 0;
 
 function date(value) { if (!value) return 'Not recorded'; return new Date(value+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
 function number(value) { return Number(value || 0).toLocaleString('en-GB'); }
@@ -146,10 +146,12 @@ function tabs() {
   return `<div class="context-strip"><div class="client-tabs"><button class="client-tab ${!state.client?'active':''}" data-client="">All clients</button>${state.clients.map(c=>`<button class="client-tab ${state.client===String(c.id)?'active':''}" data-client="${c.id}">${esc(c.name)}<span class="tab-number">${number(c.shipment_count)}</span></button>`).join('')}</div><span class="test-badge">TEST WORKSPACE</span></div>`;
 }
 function cards(overview) {
-  const notes=['Berthing not recorded','Reported arrival','Movement / delivery','All at warehouse / source proposals','Closure confirmed'];
-  return `<div class="state-grid">${states.map((s,i)=>`<button class="state-card stage-${i} ${state.filter===s?'selected':''}" data-state="${s}"><span class="card-label"><i class="state-dot"></i>${s}</span><strong class="card-number">${number(overview.states[s])}</strong><span class="card-foot">${notes[i]}${icon('arrow')}</span></button>`).join('')}</div>`;
+  const notes=['Arrival not recorded','Reported arrival','Movement / delivery','All at warehouse / source proposals','Closure confirmed'];
+  const symbols=['clock','file','ship','check','shield'];
+  return `<div class="state-grid">${states.map((s,i)=>`<button class="state-card stage-${i} ${state.filter===s?'selected':''}" data-state="${s}"><span class="card-icon" aria-hidden="true">${icon(symbols[i])}</span><span class="card-label"><i class="state-dot"></i>${s}</span><strong class="card-number">${number(overview.states[s])}</strong><span class="card-foot">${notes[i]}${icon('arrow')}</span></button>`).join('')}</div>`;
 }
 async function render() {
+  clearTimeout(overviewTrackingTimer);
   const version=++state.version; $('#breadcrumb').textContent=names[state.page];
   $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page));
   $$('.client-nav').forEach(b=>b.classList.toggle('selected',b.dataset.client===state.client));
@@ -164,8 +166,9 @@ async function render() {
     const query=workspaceQuery();
     const overview=await api('/api/overview?'+query); if(version!==state.version)return;
     const top=heading()+tabs()+(state.page==='qac'?notice(`${number(overview.rows_with_issues)} records have review findings. A finding describes a source-data question, not confirmed noncompliance.`,true):cards(overview));
-    $('#main').innerHTML=top+(state.page==='overview'?`<section class="desk-home"><div class="panel-title">Your coordination desk</div><p class="detail-note">You own the job. Teams own their next actions. Reminders stay with the owner.</p>${deskCards(overview.queue_counts,true)}</section>`:'')+`<div id="register-panel" class="panel"></div>`+(state.page==='overview'?lowerPanels(): '');
+    $('#main').innerHTML=top+(state.page==='overview'?`<div class="overview-workbench"><div id="overview-tracking">${trackingOverview(overview.tracking)}</div><section class="desk-home panel"><div class="desk-home-heading"><div><span class="section-kicker">THE NEXT MOVE</span><h2 class="panel-title">Your coordination desk</h2></div><span class="desk-home-symbol" aria-hidden="true">${icon('clock')}</span></div><p class="detail-note">A clear view of the work across your teams.</p>${deskCards(overview.queue_counts,true)}</section></div>`:'')+`<div id="register-panel" class="panel"></div>`+(state.page==='overview'?lowerPanels(): '');
     await loadTable(version);
+    if(state.page==='overview'&&overview.tracking?.service_running)overviewTrackingTimer=setTimeout(()=>refreshTrackingOverview(version),15000);
   } catch(error) { if(version===state.version)$('#main').innerHTML=heading()+`<div class="inline-error" role="alert">${esc(error.message)}<br><button class="button secondary" id="retry-load">Try again</button></div>`; }
 }
 function lowerPanels() {
@@ -390,11 +393,13 @@ function bindCoordination(r) {
   });
 }
 function renderDetail(tab='milestones') {
+  clearTimeout(trackingTimer);const trackingRender=++trackingEpoch;
   const r=state.detail,d=r.dates,editable=Boolean(r.id),o=r.operation;
-  const available=editable?[['milestones','Summary'],['edit','Update job'],['invoices','Invoices'],['movements','Movements'],['followups','Follow-ups'],['coordination','Team coordination'],['source','Source & history']]:[['milestones','Milestones'],['source','Original source']];
+  const available=editable?[['milestones','Summary'],['edit','Update job'],['invoices','Invoices'],['movements','Movements'],['followups','Follow-ups'],['coordination','Team coordination'],['tracking','Carrier tracking'],['source','Source & history']]:[['milestones','Milestones'],['source','Original source']];
   $('#detail-content').innerHTML=`<header class="detail-top"><div class="detail-topline"><span>${esc(r.client_name)} / ${esc(r.job_id)}</span><button class="icon-button" data-close-detail aria-label="Close shipment details">${icon('close')}</button></div><h2 id="detail-title">${esc(r.bl)}</h2><p>${esc(r.description)}</p><div class="job-officers"><span>Import Officer(s)</span><strong>${esc(r.import_officer||(editable?'Unassigned':'Assigned after import'))}</strong></div><div class="detail-badges">${pill(r.state||r.proposed_state)}<span class="badge preview">${esc(r.review_status||'Historical proposal')}</span><span class="badge">${r.source_row?'CSV row '+r.source_row:'Manual entry'}</span></div></header><div class="detail-tabs">${available.map(([key,label])=>`<button class="detail-tab ${tab===key?'active':''}" data-detail-tab="${key}">${label}</button>`).join('')}</div><div class="detail-body"></div>`;
   const body=$('.detail-body',$('#detail-content'));
-  if(tab==='edit'&&editable)body.innerHTML=editJob(r);
+  if(tab==='tracking'&&editable){body.innerHTML='<p class="detail-note">Loading carrier tracking…</p>';loadTracking(r,body,trackingRender);}
+  else if(tab==='edit'&&editable)body.innerHTML=editJob(r);
   else if(tab==='invoices'&&editable)body.innerHTML=invoiceForm(r);
   else if(tab==='movements'&&editable)body.innerHTML=movementForm(r);
   else if(tab==='followups'&&editable)body.innerHTML=followupForm(r);
@@ -403,8 +408,9 @@ function renderDetail(tab='milestones') {
     const source=r.source_snapshot||r;
     body.innerHTML=`<section class="detail-section"><h3>Original source</h3>${r.batch_id?`<p class="source-meta">File: ${esc(r.original_filename||r.filename)}<br>Section: ${esc(source.section)}<br>Physical CSV row: ${r.source_row}<br>Latest known reporting cut-off: ${r.report_date?date(r.report_date):'Unknown'}<br>Import batch: ${esc(r.batch_id)}</p>${notice('Original values remain unchanged beneath owner updates.')}<table class="raw-table"><tbody>${source.raw.map((v,i)=>`<tr><td>${esc(source.source_headers?(source.source_headers[i]||'Unnamed column '+(i+1)):(sourceHeaders[i]||'Column '+(i+1)))}</td><td>${v?esc(v):'<span class="muted">Empty cell</span>'}</td></tr>`).join('')}</tbody></table>`:'<p class="detail-note">Created manually by the owner. No CSV source is attached.</p>'}</section>${r.report_history?.length?`<section class="detail-section"><h3>Report update history</h3><p class="detail-note">The original source above remains unchanged. Later reports update known values without clearing fields absent from a newer report.</p>${r.report_history.map(h=>`<details class="history-entry"><summary>${esc(h.filename)} · row ${h.source_row} · ${h.report_date?date(h.report_date):'Cut-off unknown'}</summary><table class="raw-table"><tbody>${h.record.raw.map((v,i)=>`<tr><td>${esc(h.record.source_headers?.[i]||'Column '+(i+1))}</td><td>${esc(v)}</td></tr>`).join('')}</tbody></table></details>`).join('')}</section>`:''}<section class="detail-section"><h3>Application history</h3>${(r.history||[]).map(e=>`<details class="history-entry"><summary>${esc(e.action.replaceAll('_',' '))} · ${esc(new Date(e.at*1000).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}))} · ${esc(e.actor)}</summary>${e.detail?.reason?`<p>Reason: ${esc(e.detail.reason)}</p>`:''}<pre>${esc(JSON.stringify(e.detail||{},null,2))}</pre></details>`).join('')||'<p class="detail-note">No recorded changes.</p>'}</section>`;
   } else {
-    body.innerHTML=`${notice(esc(r.state_note),!o?.reconciled)}<div class="detail-facts">${[['Terminal',r.terminal],['Shipping line',r.liner],['Containers',r.container_count],['Pending warehouse',r.pending_count],['Delivery location',r.delivery_location],['Field Agent',r.field_agent??r.handler],['Reminder recipient','Owner'],['C Number / SGD',r.sgd]].map(([l,v])=>`<div class="fact"><span>${l}</span><strong>${esc(v??'Not established')||'Not recorded'}</strong></div>`).join('')}</div>${r.assessment?.draft_requirements_cleared?notice('Client approval follow-up cleared: final assessment received date and C Number are recorded. No approval date or approver was inferred.'):''}<section class="detail-section"><h3>Documents & milestones</h3><div class="milestone-grid">${Object.entries(opFields).map(([k,l])=>`<div class="milestone ${d[k]?'recorded':''}"><span class="milestone-label"><i class="milestone-dot"></i>${l}</span><span class="milestone-value ${!d[k]?'missing':''}">${d[k]?date(d[k]):'Not recorded / review'}</span></div>`).join('')}</div><p class="detail-note">Client approval remains part of preparing the final assessment; approval details are not recorded here for now. Document dates do not independently verify documents or payment.</p></section>${editable?`<section class="detail-section"><h3>Next actions</h3>${r.actions.filter(a=>a.status!=='resolved').map(a=>`<div class="finding">${icon('clock')}<div><p>${esc(a.next_action)}</p><small>${esc(statusNames[a.status])} · ${esc(a.team_label)} / ${esc(a.responsible)} · ${esc(a.source)} · Reminder to: Owner</small></div></div>`).join('')||'<p class="detail-note">No calculated follow-ups.</p>'}</section><section class="detail-section"><h3>Completion checklist</h3>${r.closure_missing.length?`<p class="detail-note">Still needed: ${r.closure_missing.map(esc).join('; ')}.</p>`:notice('Closure requirements recorded. Use Update job to confirm Completed.')}</section>`:''}${pendingReport(r)}<section class="detail-section"><h3>Reported comment</h3><div class="comment-box">${esc(r.comments||'No source comment.')}</div></section><section class="detail-section"><h3>Review findings</h3>${r.issues.map(i=>`<div class="finding">${icon(i.severity==='info'?'info':'warning')}<div><p>${esc(i.message)}</p><small>${esc(i.source||'Original import')} · ${esc(i.field||'Record')}</small></div></div>`).join('')||'<p class="detail-note">No automated findings. Owner entries are not independent verification.</p>'}</section>`;
+    body.innerHTML=`${notice(esc(r.state_note),!o?.reconciled)}<div class="detail-facts">${[['Terminal',r.terminal],['Shipping line',r.liner],['Containers',r.container_count],['Pending warehouse',r.pending_count],['Delivery location',r.delivery_location],['Field Agent',r.field_agent??r.handler],['Reminder recipient','Owner'],['C Number / SGD',r.sgd]].map(([l,v])=>`<div class="fact"><span>${l}</span><strong>${esc(v??'Not established')||'Not recorded'}</strong></div>`).join('')}</div>${editable?'<div id="tracking-summary" class="tracking-summary-slot"><p class="detail-note">Loading carrier status…</p></div>':''}${r.assessment?.draft_requirements_cleared?notice('Client approval follow-up cleared: final assessment received date and C Number are recorded. No approval date or approver was inferred.'):''}<section class="detail-section"><h3>Documents & milestones</h3><div class="milestone-grid">${Object.entries(opFields).filter(([k])=>k!=='terminal_validity').map(([k,l])=>`<div class="milestone ${d[k]?'recorded':''}"><span class="milestone-label"><i class="milestone-dot"></i>${l}</span><span class="milestone-value ${!d[k]?'missing':''}">${d[k]?date(d[k]):'Not recorded / review'}</span></div>`).join('')}</div><p class="detail-note">Client approval remains part of preparing the final assessment; approval details are not recorded here for now. Document dates do not independently verify documents or payment.</p></section>${editable?`<section class="detail-section"><h3>Next actions</h3>${r.actions.filter(a=>a.status!=='resolved').map(a=>`<div class="finding">${icon('clock')}<div><p>${esc(a.next_action)}</p><small>${esc(statusNames[a.status])} · ${esc(a.team_label)} / ${esc(a.responsible)} · ${esc(a.source)} · Reminder to: Owner</small></div></div>`).join('')||'<p class="detail-note">No calculated follow-ups.</p>'}</section><section class="detail-section"><h3>Completion checklist</h3>${r.closure_missing.length?`<p class="detail-note">Still needed: ${r.closure_missing.map(esc).join('; ')}.</p>`:notice('Closure requirements recorded. Use Update job to confirm Completed.')}</section>`:''}${pendingReport(r)}<section class="detail-section"><h3>Reported comment</h3><div class="comment-box">${esc(r.comments||'No source comment.')}</div></section><section class="detail-section"><h3>Review findings</h3>${r.issues.map(i=>`<div class="finding">${icon(i.severity==='info'?'info':'warning')}<div><p>${esc(i.message)}</p><small>${esc(i.source||'Original import')} · ${esc(i.field||'Record')}</small></div></div>`).join('')||'<p class="detail-note">No automated findings. Owner entries are not independent verification.</p>'}</section>`;
   }
+  if(editable&&tab==='milestones')loadTrackingSummary(r,$('#tracking-summary'),trackingRender);
   bindWarehouseBalance(r);
   $('#job-edit')?.addEventListener('submit',e=>{
     e.preventDefault();const f=e.currentTarget;
@@ -547,3 +553,119 @@ $('#logout').addEventListener('click',async()=>{try{await api('/api/auth/logout'
 $('#detail-dialog').addEventListener('click',event=>{if(event.target===$('#detail-dialog'))$('#detail-dialog').close();});
 paintIcons();syncSidebar();
 showAuth().catch(error=>{$('#boot').innerHTML=`<span class="brand-symbol">L</span><p>Workspace unavailable</p><p>${esc(error.message)}</p><button class="button secondary" id="boot-retry">Try again</button>`;$('#boot-retry').onclick=()=>location.reload();});
+
+function trackingTime(value){return value?new Date(value*1000).toLocaleString('en-GB',{timeZone:'Africa/Lagos'}):'Not yet checked';}
+const trackingLabels={eta:'Destination ETA',berth:'Actual berthing',discharge:'Destination discharge',empty_return:'Empty return',empty_returns:'All empty containers returned'};
+const trackingStatusLabels={monitoring:'Monitoring',checking:'Checking carrier',needs_attention:'Needs attention',finished:'Empties returned',historical:'Historical record',unsupported:'Carrier not supported yet',disabled:'Service unavailable',not_enabled:'Waiting for service'};
+function trackingStatus(t){
+  if(t.status)return t.status;
+  if(t.checks?.some(c=>c.status==='running'))return 'checking';
+  if(t.config?.status==='finished')return 'finished';
+  if(t.checks?.[0]?.status==='failed')return 'needs_attention';
+  return t.service_running&&t.eligible?'monitoring':'disabled';
+}
+function trackingMessage(t){
+  const status=trackingStatus(t);
+  if(status==='finished')return 'All tracked empty containers have been returned. Carrier checks are finished; clearing-job closure stays separate.';
+  if(status==='historical')return t.eligibility_reason||'Historical report retained for reference. This record is not being sent for live carrier checks.';
+  if(status==='unsupported')return t.eligibility_reason||'Automatic tracking is available for MSC. Other shipping lines will be added as their connectors are ready.';
+  if(status==='checking')return 'Checking the carrier for ETA, discharge and empty-return changes.';
+  if(status==='needs_attention')return t.attention?.length?'Carrier information differs from recorded job facts. Existing values have been retained for attention.':'The latest check could not be completed. Last known shipment facts are retained while the service retries.';
+  if(status==='disabled'||t.service_running===false)return 'The tracking service is not running. Last known information is retained; no background check is being claimed.';
+  return 'MSC is checked automatically until all expected empty containers are returned. Matching updates are recorded with their source.';
+}
+function trackingSchedule(t){
+  const status=trackingStatus(t);
+  if(status==='finished')return 'Finished';
+  if(status==='historical'||status==='unsupported')return 'Not scheduled';
+  if(status==='checking')return 'In progress';
+  if(t.service_running===false)return 'Waiting for service';
+  return t.next_due?trackingTime(t.next_due):'Not scheduled';
+}
+function trackingCard(t,compact=false){
+  const status=trackingStatus(t),latest=t.latest,ob=latest?.observation,last=t.checks?.[0];
+  const attention=Array.isArray(t.attention)?t.attention:[];
+  return `<section class="tracking-card ${compact?'compact':''}" aria-label="Automatic carrier tracking"><div class="tracking-card-heading"><div>${icon('ship')}<h3>Carrier tracking</h3></div><span class="tracking-status tracking-${esc(status)}">${esc(trackingStatusLabels[status]||status.replaceAll('_',' '))}</span></div><p class="tracking-message">${esc(trackingMessage(t))}</p><div class="tracking-timing"><span>Last successful check<strong>${esc(trackingTime(latest?.ended_at))}</strong></span><span>Next check<strong>${esc(trackingSchedule(t))}</strong></span>${last?.status==='failed'?`<span class="tracking-last-failure">Last attempt failed<strong>${esc(trackingTime(last.ended_at||last.started_at))}</strong></span>`:''}</div>${ob?`<div class="tracking-progress"><span>${esc(ob.destination)}</span><span>${number(ob.discharged_count)} / ${number(ob.container_count)} discharged</span><span>${number(ob.returned_count)} / ${number(ob.container_count)} empties returned</span></div>`:''}${attention.length?`<div class="tracking-attention" role="status">${attention.map(a=>`<p><strong>${esc(trackingLabels[a.field]||a.field||'Carrier update')}</strong> ${esc(a.message||'A conflicting value was retained for review.')}${a.current!==undefined||a.reported!==undefined?`<small>Current: ${esc(a.current??'Unknown')} · Carrier: ${esc(a.reported??'Not reported')}</small>`:''}</p>`).join('')}</div>`:''}${compact?'<button type="button" class="text-link tracking-history-link" data-detail-tab="tracking">View tracking history '+icon('arrow')+'</button>':''}</section>`;
+}
+function trackingPoll(t,callback){
+  const status=trackingStatus(t);
+  if(status==='checking'||(t.service_running&&t.eligible&&!['finished','historical','unsupported','disabled'].includes(status))){
+    clearTimeout(trackingTimer);trackingTimer=setTimeout(callback,status==='checking'?2000:15000);
+  }
+}
+async function trackingRefreshJob(r,epoch,tab){
+  const updated=await api('/api/shipments/'+r.id);
+  if(epoch!==trackingEpoch||!$('#detail-dialog').open)return;
+  await refreshMeta();await render();
+  if(epoch!==trackingEpoch||!$('#detail-dialog').open)return;
+  state.detail=updated.shipment;renderDetail(tab);
+}
+async function loadTrackingSummary(r,slot,epoch){
+  if(!slot)return;
+  try{
+    const {tracking:t}=await api(`/api/shipments/${r.id}/tracking`);
+    if(epoch!==trackingEpoch||!$('#detail-dialog').open)return;
+    if(t.shipment_revision!==undefined&&t.shipment_revision!==r.revision){await trackingRefreshJob(r,epoch,'milestones');return;}
+    slot.innerHTML=trackingCard(t,true);
+    trackingPoll(t,()=>{if(epoch===trackingEpoch&&$('#detail-dialog').open)loadTrackingSummary(r,slot,epoch);});
+  }catch(e){if(epoch===trackingEpoch)slot.innerHTML=`<section class="tracking-card"><h3>Carrier tracking unavailable</h3><p class="tracking-message">${esc(e.message)}</p></section>`;}
+}
+function trackingChangedValues(check){
+  const delta=check.changes,ob=check.observation;
+  if(!delta)return '';
+  const milestoneChanges=(delta.milestones||[]).map(change=>`<li><strong>${esc(trackingLabels[change.field]||change.field)}</strong>: ${change.before?date(change.before):'Not previously reported'} → ${change.after?date(change.after):'No longer reported by carrier'}</li>`);
+  const newIds=new Set(delta.new_events||[]);
+  const events=(ob?.containers||[]).flatMap(c=>(c.events||[]).filter(e=>newIds.has(e.id)).map(e=>`<li>${date(e.date)} · ${esc(c.number)} · ${esc(e.label)} · ${esc(e.location)}</li>`));
+  return milestoneChanges.length||events.length?`<ul class="tracking-change-list">${milestoneChanges.join('')}${events.join('')}</ul>`:'<p class="detail-note">No new carrier events or changed milestone dates.</p>';
+}
+async function retryTracking(button,r,body,epoch){
+  const error=$('.tracking-retry-error',body);error.textContent='';button.disabled=true;
+  button.trackingCommandId=button.trackingCommandId||crypto.randomUUID();
+  try{
+    await api(`/api/shipments/${r.id}/tracking/check`,{command_id:button.trackingCommandId});
+    if(epoch===trackingEpoch&&$('#detail-dialog').open)loadTracking(r,body,epoch);
+  }catch(e){error.textContent=e.message;button.disabled=false;}
+}
+async function loadTracking(r,body,epoch){
+  try{
+    const {tracking:t}=await api(`/api/shipments/${r.id}/tracking`);
+    if(epoch!==trackingEpoch||!$('#detail-dialog').open)return;
+    if(t.shipment_revision!==undefined&&t.shipment_revision!==r.revision){await trackingRefreshJob(r,epoch,'tracking');return;}
+    const latest=t.latest,ob=latest?.observation,status=trackingStatus(t),checks=t.checks||[];
+    const openDetails=new Set($$('details[open]',body).map(el=>el.dataset.trackingContainer||el.dataset.trackingCheck));
+    const visibleEvidence=new Map($$('[data-tracking-evidence]',body).filter(button=>!button.nextElementSibling.hidden).map(button=>[button.dataset.trackingEvidence,button.nextElementSibling.textContent]));
+    body.innerHTML=`${trackingCard(t)}
+      ${status==='needs_attention'&&t.eligible&&t.service_running?'<div class="tracking-retry"><button type="button" class="button secondary" id="tracking-retry">Retry now</button><span>A failed check does not erase the last known dates.</span></div><p class="tracking-retry-error form-error" role="alert"></p>':''}
+      ${ob?`<section class="detail-section"><h3>Latest carrier information</h3><p class="detail-note">${esc(ob.source_timestamp)}${ob.collection_method==='owner_pasted_text'?' · Earlier manually captured evidence':''}. Event timezones remain unknown when the carrier supplies only dates.</p><div class="milestone-grid">${['eta','berth','discharge','empty_return'].map(k=>`<div class="milestone"><span>${esc(trackingLabels[k])}</span><span>${ob.milestones[k]?date(ob.milestones[k]):'Not reported / incomplete'}</span></div>`).join('')}</div>${ob.containers.map(container=>`<details class="history-entry" data-tracking-container="${esc(container.number)}"><summary>${esc(container.number)} — ${container.milestones.empty_return?'empty returned '+date(container.milestones.empty_return):'awaiting empty return'}</summary><div class="table-scroll"><table class="raw-table"><thead><tr><th>Date</th><th>Location</th><th>Carrier event</th><th>Details</th></tr></thead><tbody>${container.events.map(e=>`<tr><td>${date(e.date)}</td><td>${esc(e.location)}</td><td>${esc(e.label)}</td><td>${esc((e.detail||[]).join(' · '))}</td></tr>`).join('')}</tbody></table></div></details>`).join('')}<p class="detail-note">Carrier collection and empty-return events do not confirm client warehouse delivery or job completion.</p></section>`:''}
+      <section class="detail-section"><h3>What changed</h3>${checks.length?checks.map(check=>{const update=check.review,automatic=['automatic','auto'].includes(update?.decision)||update?.automatic;const label=check.status==='failed'?'Check failed':check.status==='running'?'Checking carrier':automatic?'Automatic update':check.status==='succeeded'?'Carrier checked':check.status;return `<details class="history-entry" data-tracking-check="${esc(check.id)}"><summary>${esc(trackingTime(check.started_at))} · ${esc(label)}</summary>${check.error?`<p class="form-error">${esc(check.error)}</p>`:''}${trackingChangedValues(check)}${update?.fields?.length?`<p>Recorded in the job: ${update.fields.map(k=>esc(trackingLabels[k]||k)).join(', ')}.</p>`:''}${update?.reason?`<p class="detail-note">${esc(update.reason)}</p>`:''}<button type="button" class="text-link" data-tracking-evidence="${esc(check.id)}">View source evidence</button><pre class="tracking-evidence" hidden></pre></details>`;}).join(''):`<p class="detail-note">${status==='historical'?'No live checks are scheduled for this historical record.':status==='unsupported'?'Carrier history will appear when this shipping line is supported.':'Check history will appear here as the service monitors this shipment.'}</p>`}</section>`;
+    $$('details',body).forEach(el=>{if(openDetails.has(el.dataset.trackingContainer||el.dataset.trackingCheck))el.open=true;});
+    $$('[data-tracking-evidence]',body).forEach(button=>{if(visibleEvidence.has(button.dataset.trackingEvidence)){button.nextElementSibling.textContent=visibleEvidence.get(button.dataset.trackingEvidence);button.nextElementSibling.hidden=false;}});
+    $('#tracking-retry',body)?.addEventListener('click',e=>retryTracking(e.currentTarget,r,body,epoch));
+    $$('[data-tracking-evidence]',body).forEach(button=>button.addEventListener('click',async()=>{const pre=button.nextElementSibling;try{const result=await api(`/api/shipments/${r.id}/tracking/${button.dataset.trackingEvidence}/evidence`);pre.textContent=result.text||'No source text was captured for this attempt.';pre.hidden=false;}catch(e){pre.textContent=e.message;pre.hidden=false;}}));
+    trackingPoll(t,()=>{if(epoch===trackingEpoch&&$('#detail-dialog').open)loadTracking(r,body,epoch);});
+  }catch(e){if(epoch===trackingEpoch)body.innerHTML=notice(esc(e.message),true);}
+}
+
+function trackingOverview(t){
+  if(!t)return '';
+  const running=Boolean(t.service_running),monitored=Number(t.monitored_count)||0,finished=Number(t.finished_count)||0,attention=Number(t.attention_count)||0;
+  const items=Array.isArray(t.attention)?t.attention:[];
+  const status=!running?'Service unavailable':attention?'Needs attention':monitored?'Automatic checks scheduled':'Watching for shipments';
+  const description=!running?'The tracking service is not running. Last known carrier information is retained; live changes have not been checked.':monitored?'Eligible MSC shipments are checked in the background through empty return. Changes and source history stay with each job.':'Waiting for eligible MSC shipments. Background checks start when a live MSC job is available; historical reports stay separate.';
+  return `<section class="tracking-overview panel" aria-label="Automatic shipment tracking"><div class="tracking-overview-heading"><div><span class="tracking-overview-icon">${icon('ship')}</span><h2>Automatic shipment tracking</h2></div><span class="tracking-status ${!running?'tracking-disabled':attention?'tracking-needs_attention':'tracking-monitoring'}">${status}</span></div><p class="tracking-message">${description}</p><div class="tracking-overview-counts"><span><strong>${number(monitored)}</strong> monitoring</span><span><strong>${number(finished)}</strong> tracking finished</span><span class="${attention?'has-attention':''}"><strong>${running?number(attention):'—'}</strong> ${running?'need attention':'live status unavailable'}</span></div>${items.length?`<div class="tracking-overview-attention">${items.slice(0,5).map(item=>`<button type="button" class="tracking-attention-job" data-shipment="${esc(item.shipment_id)}" data-open-tab="tracking"><span><strong>${esc(item.bl||'Shipment '+item.shipment_id)}</strong><small>${esc(item.client_name||'')}</small></span><span>${esc(item.message||'Carrier tracking needs attention.')}</span>${icon('arrow')}</button>`).join('')}${attention>items.slice(0,5).length?'<p class="detail-note">Showing the latest tracking items needing attention in this view.</p>':''}</div>`:''}</section>`;
+}
+async function refreshTrackingOverview(version){
+  if(version!==state.version||state.page!=='overview')return;
+  try{
+    const result=await api('/api/overview?'+workspaceQuery());
+    if(version!==state.version||state.page!=='overview')return;
+    const slot=$('#overview-tracking');
+    if(slot)slot.innerHTML=trackingOverview(result.tracking);
+    if(result.tracking?.service_running)overviewTrackingTimer=setTimeout(()=>refreshTrackingOverview(version),15000);
+  }catch(e){
+    if(version!==state.version||state.page!=='overview')return;
+    const slot=$('#overview-tracking');
+    if(slot)slot.innerHTML=`<section class="tracking-card"><h3>Tracking status unavailable</h3><p class="tracking-message">The latest tracking-service status could not be loaded. Last known shipment information is retained.</p></section>`;
+    overviewTrackingTimer=setTimeout(()=>refreshTrackingOverview(version),30000);
+  }
+}

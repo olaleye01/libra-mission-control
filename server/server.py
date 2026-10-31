@@ -23,7 +23,9 @@ from store import Store
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_BODY = 8 * 1024 * 1024
-ASSETS = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css"}
+ASSETS = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css",
+          "/assets/libra-circle-logo.png": "assets/libra-circle-logo.png",
+          "/assets/libra-circle-icon.webp": "assets/libra-circle-icon.webp"}
 
 
 class Application:
@@ -32,7 +34,9 @@ class Application:
         self.auth = Auth(self.store)
         self.source_dir = Path(source_dir or ROOT / "imports" / "sources").resolve()
         self.routes = []
-        for module in ("auth", "clients", "imports", "shipments", "operations", "report_updates"):
+        from tracking import Tracking
+        self.tracking = Tracking(self)
+        for module in ("auth", "clients", "imports", "shipments", "operations", "report_updates", "tracking"):
             importlib.import_module(module).register(self.route, ApiError)
 
     def route(self, method, path, public=False):
@@ -104,7 +108,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not asset.is_file():
                     raise ApiError(503, "Frontend is unavailable.")
                 mime = mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
-                self.send(200, asset.read_bytes(), mime + "; charset=utf-8")
+                content_type = mime + ("; charset=utf-8" if mime.startswith("text/") or mime == "application/javascript" else "")
+                self.send(200, asset.read_bytes(), content_type)
                 return
             candidates = [(m, p.match(path), fn, public) for m, p, fn, public in self.app.routes if p.fullmatch(path)]
             if not candidates:
@@ -177,9 +182,12 @@ if __name__ == "__main__":
         parser.exit(1, f"Could not start local server: {exc}\n")
     print(f"Libra Mission Control: http://127.0.0.1:{httpd.server_address[1]}", flush=True)
     print("TEST workspace · notifications disabled · Hermes not connected", flush=True)
+    # The ordinary service owns scheduling; test Application instances never contact carriers.
+    httpd.app.tracking.start_worker()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        httpd.app.tracking.stop_worker()
         httpd.server_close()

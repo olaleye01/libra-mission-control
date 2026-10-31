@@ -33,6 +33,7 @@ def register(route, ApiError):
                 "terminals": dict(terminal_counts.most_common(5)),
                 "action_count": sum(a["status"] != "resolved" for r in records for a in r["actions"]),
                 "queue_counts": counts([a for r in records for a in r["actions"]]),
+                "tracking": req.app.tracking.summary(records),
                 "mode": "test", "hermes": "not_connected", "notifications": "disabled"}
 
     @route("GET", "/api/shipments")

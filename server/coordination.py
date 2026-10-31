@@ -21,6 +21,8 @@ def normalize(data):
         data['import_officer'] = data.get('import_officer') or 'Owner'
         data['ownership_version'] = 1
     data.setdefault('delivery_location', '')
+    data['dates'].setdefault('discharge', None)
+    data.setdefault('arrival_basis', 'legacy_berth')
     data.setdefault('coordination', {})
     for item in data['followups'].values():
         if 'team' not in item:

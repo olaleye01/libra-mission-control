@@ -57,6 +57,8 @@ DO, Customs release, TDO, gate-out and factory arrival remain distinct. The impo
 
 Select **Create shipment** to enter a job for any client. Client and BL are explicit. Matching report revisions update a job only after a unique client/BL match is reviewed; repeated BLs within a report remain distinct. Creating a separate job with an existing client/BL requires a duplicate reason. Each job has an internal LMC ID. Its optional **Delivery location** field holds the intended client warehouse or delivery address (up to 500 characters). It is available when creating or updating a job and appears in the shipment summary. Entering a destination does not confirm delivery.
 
+The shipment summary temporarily hides Terminal validity. Its date remains available in Update job and source/history; saved values are preserved.
+
 Open a job and use its tabs:
 
 1. **Update job**: correct descriptive fields, record document dates, confirm release counts, rotation and closure applicability. Every save needs a reason and records before/after values. The warehouse delivery balance controls and quantity-reconciliation checkbox are temporarily hidden here. Saving other edits preserves existing reconciliation and movement history. Pending quantities remain calculated from movement history.
@@ -115,3 +117,25 @@ Select **Manage clients** beside YOUR CLIENTS to open **Clients & departments**.
 Use **Add department** to create a destination for reassignment. New-client forms use the selected department, defaulting to FMCG 1. Renames preserve the client ID and its reviewed CSV profile, so renaming GZI or CHI does not disable imports or create another default client on restart. Names, notes, visibility and reassignment changes are revision checked, transactionally audited and accept idempotent commands.
 
 Migration 5 backs up the application SQLite database before adding department/client metadata and assigning the existing clients to FMCG 1. It preserves job IDs, source rows, operational edits, movements, credentials and sessions.
+
+## Automatic MSC tracking
+
+Carrier tracking is part of the system. The running server automatically discovers operational MSC jobs from the shipping-line field and BL, obtains the Nigerian discharge port from MSC, and monitors them until all expected empty containers have been returned. There are no tracking setup, authorisation, reason, paste or routine approval forms. Historical, unreconciled test imports are excluded from live queries; manually created or explicitly reconciled operational jobs are eligible. Hidden clients and completed jobs are excluded. Other carriers remain unsupported until a connector is added.
+
+The first check runs shortly after an eligible job appears. Successful checks persist the next 08:00 or 16:00 Africa/Lagos run; transient failures back off rather than hammering the website. The scheduler starts with `python3 server/server.py`, uses durable SQLite state and stops with the server. It needs no Hermes connection, browser tab left open, OS cron or extra HTTP listener. Test Application instances do not start networking. Tracking is not a notification transport: Telegram and outbound reminders remain off.
+
+Routine, unambiguous carrier changes update empty or source-owned operational dates automatically, with before/after audit and check history. Independent owner corrections and clears remain authoritative; conflicting reports are kept as evidence and shown as exceptions. Transshipment discharge is excluded, actual berthing stays separate, and destination discharge is the carrier arrival basis. Unknown dates never clear known facts. Count mismatches and validation conflicts remain exceptions rather than fabricated quantities or release evidence. Historical source snapshots are not rewritten and the existing berth-based TDO-age clock stays unchanged.
+
+Whole-job discharge and empty return require every expected container, using the last applicable date. Empty return needs the ordered destination-discharge, carrier-collection and Nigerian empty-receipt chain. Finishing carrier monitoring does not establish client warehouse delivery, ECD, invoices or administrative job completion.
+
+The overview surfaces tracking exceptions across the selected clients/department. Each job’s Summary shows automatic status, last successful check, next check and return progress. Carrier tracking history retains event differences, failures and source evidence. A secondary Retry now control is available for attention cases; normal operation requires no clicks.
+
+The collector uses installed Chrome/Chromium with an isolated disposable profile, no browser Python packages and no debugging listener. On macOS it detects Google Chrome; server operators may configure an existing executable using `LIBRA_CHROME_PATH`. Browser installation/runtime setup is deployment work. It uses MSC’s public tracking page, expands visible container histories and validates BL, destination and complete coverage. It does not bypass active verification or access denials. A provider denial is surfaced and retried conservatively; it is never presented as successful tracking or converted into a user data-entry task. Live unattended availability is reported separately in docs/msc_tracking_validation.md.
+
+Migration 6 keeps tracking settings and observations separate from imports and operational facts, with a private backup before upgrading existing storage. Captured source evidence, credentials, private reports and screenshots remain outside Git and public assets. Older owner-only capture/config/review endpoints are retained for compatibility but are not part of the dashboard workflow.
+
+## Libra Circle visual identity
+
+The dashboard uses the official Libra Circle logo and navy/gold/blue palette, with the existing Georgia headings and system sans-serif interface typography retained. The redesigned shell, overview workbench, registers, import views, QAC, coordination desk, forms, shipment drawers and responsive navigation share one stylesheet. The official images are bundled locally under `frontend/assets/`; viewing the app does not request company-site assets or external fonts.
+
+Brand assets are served through two fixed public image routes. Application data, source reports and credentials remain private. See `docs/dashboard_redesign_validation.md` for visual and functional checks.

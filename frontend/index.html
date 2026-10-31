@@ -4,15 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#131e3a">
+  <link rel="icon" href="/assets/libra-circle-icon.webp" type="image/webp">
   <title>Libra — Shipment Mission Control</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div id="boot" class="boot"><span class="brand-symbol">L</span><p>Opening your workspace…</p></div>
+  <div id="boot" class="boot"><span class="brand-symbol"><img src="/assets/libra-circle-icon.webp" alt=""></span><p>Opening your workspace…</p></div>
   <section id="auth-screen" class="auth-screen" hidden>
     <div class="auth-story">
-      <a class="brand" href="/" aria-label="Libra home"><span class="brand-symbol">L</span><span>libra<span class="brand-caption">MISSION CONTROL</span></span></a>
+      <a class="brand" href="/" aria-label="Libra home"><span class="brand-wordmark"><img class="brand-logo" src="/assets/libra-circle-logo.png" alt="Libra Circle"><span class="brand-caption">MISSION CONTROL</span></span><img class="brand-icon" src="/assets/libra-circle-icon.webp" alt=""></a>
       <div><span class="eyebrow">FROM PRE-ALERT TO FINAL DELIVERY</span><h1>Keep the whole<br>operation in view.</h1><p>One shared register for your clients, shipment milestones and the work that needs attention.</p><div class="auth-route"><span>Arrival</span><i></i><span>Clearing</span><i></i><span>Delivery</span></div></div>
       <p class="auth-foot">Built for the way clearing works.</p>
     </div>
@@ -26,13 +28,13 @@
         <p id="auth-error" class="form-error" role="alert"></p>
         <button id="auth-submit" class="button primary full" type="submit">Sign in <span aria-hidden="true">↗</span></button>
       </form>
-      <p class="auth-note">Your password is stored as a salted hash on this machine. Hermes and Telegram are not connected in this slice.</p>
+      <p class="auth-note">Your private workspace for clearing operations. Sign in to continue.</p>
     </div></div>
   </section>
 
   <div id="app" class="app" hidden>
     <aside id="sidebar" class="sidebar">
-      <div class="sidebar-header"><a class="brand" href="/" aria-label="Libra overview"><span class="brand-symbol">L</span><span class="brand-wordmark">libra<span class="brand-caption">MISSION CONTROL</span></span></a><button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-controls="sidebar" aria-expanded="true"><span data-icon="sidebarCollapse"></span></button></div>
+      <div class="sidebar-header"><a class="brand" href="/" aria-label="Libra overview"><span class="brand-wordmark"><img class="brand-logo" src="/assets/libra-circle-logo.png" alt="Libra Circle"><span class="brand-caption">MISSION CONTROL</span></span><img class="brand-icon" src="/assets/libra-circle-icon.webp" alt=""></a><button id="sidebar-toggle" class="icon-button sidebar-toggle" type="button" aria-label="Collapse sidebar" title="Collapse sidebar" aria-controls="sidebar" aria-expanded="true"><span data-icon="sidebarCollapse"></span></button></div>
       <div class="workspace-tag"><span class="small-mark">LC</span><div class="workspace-info"><strong>Libra Circle</strong><label for="department-select" class="visually-hidden">Department</label><select id="department-select" aria-label="Department"><option>FMCG 1</option></select></div></div>
       <span class="nav-label">WORKSPACE</span>
       <nav aria-label="Main navigation">
@@ -51,9 +53,9 @@
     </aside>
     <button id="sidebar-backdrop" class="sidebar-backdrop" type="button" aria-label="Close navigation" tabindex="-1" hidden></button>
     <div class="main-shell">
-      <header class="topbar"><div class="breadcrumbs"><button id="mobile-menu" class="icon-button mobile-only" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="false">☰</button><span>Operations</span><span class="slash">/</span><strong id="breadcrumb">Overview</strong></div><div class="topbar-right"><span class="local-connected"><i></i>Local API connected</span><span class="top-divider"></span><button id="notification-info" class="icon-button notification-button" aria-label="Notification status"><span data-icon="bell"></span></button><span class="owner-avatar light">O</span></div></header>
+      <header class="topbar"><div class="breadcrumbs"><button id="mobile-menu" class="icon-button mobile-only" aria-label="Toggle navigation" aria-controls="sidebar" aria-expanded="false">☰</button><span>Operations</span><span class="slash">/</span><strong id="breadcrumb">Overview</strong></div><div class="topbar-right"><span class="local-connected"><i></i>Workspace connected</span><span class="top-divider"></span><button id="notification-info" class="icon-button notification-button" aria-label="Notification status"><span data-icon="bell"></span></button><span class="owner-avatar light">O</span></div></header>
       <main id="main" tabindex="-1"></main>
-      <footer class="main-footer"><span><i class="footer-dot"></i> Test records only · no outbound notifications</span><span>LIBRA MISSION CONTROL <span class="footer-version">/ SLICE 2.1</span></span></footer>
+      <footer class="main-footer"><span><i class="footer-dot"></i> Test records only · no outbound notifications</span><span>LIBRA MISSION CONTROL <span class="footer-version">/ CLEARING OPERATIONS</span></span></footer>
     </div>
   </div>
 

@@ -137,7 +137,7 @@ The saved item has id, created_at and updated_at. Manual item status does not po
 
 ## Boundaries
 
-No payment execution, deletion, notification-send, Hermes-shell or gateway-control endpoint is included. No arbitrary file path is accepted. Only the four explicit frontend asset paths are served; import originals, backups and application data are not static assets. Unknown routes return 404, known routes with another method return 405, and oversize requests return 413 before their body is read.
+No payment execution, deletion, notification-send, Hermes-shell or gateway-control endpoint is included. No arbitrary file path is accepted. Only the four explicit frontend files and two fixed brand-image paths are served; import originals, backups and application data are not static assets. Unknown routes return 404, known routes with another method return 405, and oversize requests return 413 before their body is read.
 
 The owner can view/edit all clients; staff-specific roles remain deferred. Client filtering is applied on the server but is not presented as tenant authorization. Deployment is loopback-only; proxy hosts/TLS and additional access models require explicit future configuration. No live reminder activation or VPS change is implied.
 
@@ -172,3 +172,26 @@ Client edits require a current integer revision, nonempty reason and safe comman
 Normal `/api/clients`, `/api/shipments`, `/api/overview`, `/api/actions` and `/api/imports` exclude hidden clients. These routes support department_id plus optional client_id and include_hidden=0|1 (default 0); invalid filters return 400. An explicit include_hidden=1 is for owner review, not a permission bypass. Owner shipment-detail reads retain access to hidden clients' existing jobs. New manual jobs, previews and both report-application paths reject hidden clients with 409 until restored.
 
 Reassignment changes only the client's department link: job/import/operational/movement rows are not moved, cloned or rewritten. Their department context is resolved from the client. Shipment responses include department_id, department_name and client_hidden. Client changes invalidate open report-update review tokens. Import profiles attach to immutable client IDs; renaming/reassignment does not select a different parser or alter historical CSV evidence.
+
+## Automatic MSC tracking
+
+The serving process starts a persistent application scheduler; constructing `Application` or `make_server` in tests does not start it. `Tracking.start_worker()` / `stop_worker()` control its lifecycle. The worker enrols operational MSC jobs without per-job setup or authorisation, using the BL from the job and discovering the explicit Port of Discharge from MSC. It excludes hidden clients, completed jobs and unreconciled historical imports. Other carriers are unsupported. No Hermes, OS cron or notification delivery is involved.
+
+| Method / route | Behaviour |
+|---|---|
+| GET /api/shipments/{id}/tracking | Automatic eligibility/status, service health, next_due, last 20 attempts, latest successful observation even after many failures, attention conflicts and source events |
+| POST /api/shipments/{id}/tracking/check | Optional `{command_id}` refresh; reason and revisions are supplied internally, no setup/reason form; owner session/CSRF required |
+| GET /api/shipments/{id}/tracking/{check}/evidence | Owner-authenticated, job-scoped captured plain text; never served as HTML |
+| GET /api/overview | Adds client/department-scoped `tracking` service/monitored/finished/attention counts and attention links |
+
+Tracking responses expose `automatic`, `eligible`, `eligibility_reason`, `status`, `service_running`, `scheduled`, `next_due`, `attention`, `config`, `checks`, `latest` and `shipment_revision`. Source observations include original event labels/dates/locations, semantic event IDs, parser version, source URL/timestamp, container coverage and per-container milestones. Date-only source events keep an unknown timezone. Deltas retain new/removed event IDs and milestone differences; repeated checks do not repeat unchanged event changes. Errors include safe codes/phase diagnostics and bounded page evidence where available.
+
+`tracking_configs` JSON persists enrolment identity/count, due time, failures, attention and automatically-owned value provenance; `tracking_checks` retains attempts/evidence/differences. No additional schema beyond migration 6 is needed. First checks become due promptly, then next due is the following 08:00 or 16:00 Lagos slot after success. Failures back off; explicit denials/challenges/browser unavailability use a longer delay. SQL claims prevent overlapping workers across processes, and all carrier starts share a 30-second interval. Expired checks recover without losing prior successful evidence. Shutdown stops new claims; interrupted in-flight work remains recoverable.
+
+Automatic application validates current BL/config identity, operational eligibility and matching known container totals. Only blank, source-seeded or still-source-owned values may change; independent owner changes, including later clear/change-back operations, remain exceptions. Every applied update increments the job revision and audits before/after values with actor `tracking_worker`. Observation, automatic changes, ownership provenance and next schedule commit together. No movement quantities, warehouse arrival, release readiness or job Completed are inferred.
+
+ETA is a forecast. Berth and discharge remain separate; automatic carrier arrival uses destination discharge without rewriting legacy report semantics. The prior TDO follow-up clock remains anchored to berth. Whole-job dates require all carrier containers and a count matching the job. Empty return additionally requires destination discharge, subsequent Import to consignee and later Nigerian Empty received at CY for every expected container. Accepted automatic return evidence finishes tracking independently of clearing-job completion. Partial events remain visible while collection continues.
+
+There is no arbitrary URL, command or credential accepted from a tracking request. The fixed MSC public-page connector uses an isolated browser profile over pipes, expands closed visible sections, retains all source evidence privately, and refuses mismatched identities, unsupported destinations, invalid/future actual dates, active challenges and denial pages. Unknown/missing source fields never erase operational dates.
+
+Legacy owner-only `/tracking/config`, `/tracking/capture` and `/tracking/{check}/review` POST routes remain compatible with the earlier pilot. Their original revision/idempotency/reason checks apply; they have no dashboard forms and are not required for automatic operation. Actual collector availability is an executed validation result, not inferred from scheduler or unit-test success.

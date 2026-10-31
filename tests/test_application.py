@@ -230,6 +230,17 @@ class HttpFixture(unittest.TestCase):
 
 
 class ApiTests(HttpFixture):
+    def test_public_brand_assets_are_fixed_binary_routes_without_private_file_access(self):
+        for name, mime in (('libra-circle-logo.png', 'image/png'), ('libra-circle-icon.webp', 'image/webp')):
+            path = '/assets/' + name
+            status, data, headers = self.call('GET', path)
+            self.assertEqual(status, 200)
+            self.assertEqual(headers['Content-Type'], mime)
+            self.assertEqual(data, (ROOT / 'frontend' / 'assets' / name).read_bytes())
+            self.assertEqual(self.call('POST', path, {})[0], 405)
+        for path in ('/assets/../../data/libra-test.sqlite3', '/assets/../app.js', '/assets/unlisted.png'):
+            self.assertEqual(self.call('GET', path)[0], 404)
+
     def test_authentication_csrf_and_cross_origin(self):
         self.assertEqual(self.call('GET', '/api/shipments')[0], 401)
         self.owner()

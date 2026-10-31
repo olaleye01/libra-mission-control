@@ -105,6 +105,8 @@ def patch(data, changes):
         data['legacy_handler'] = ''
     if not data['bl']:
         raise ApiError(400, 'A Bill of Lading is required.')
+    if data['dates'].get('discharge') and data['dates']['discharge'] > today():
+        raise ApiError(422, 'An actual discharge date cannot be in the future.')
     for item in list(data['invoices'].values()) + list(data['closure'].values()):
         if item['applicability'] == 'not_applicable' and not item['reason']:
             raise ApiError(400, 'Not-applicable decisions require a reason.')

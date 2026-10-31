@@ -333,7 +333,7 @@ class MigrationTests(unittest.TestCase):
             store=Store(directory)
             with store.connect() as con:
                 self.assertEqual(tuple(con.execute('SELECT * FROM shipments').fetchone()),(7,1,'old-batch',42,1))
-                self.assertEqual(con.execute('SELECT COUNT(*) FROM migrations').fetchone()[0],5)
+                self.assertEqual(con.execute('SELECT COUNT(*) FROM migrations').fetchone()[0],6)
             self.assertEqual(len(list((Path(directory)/'backups').glob('*.sqlite3'))),1)
             with sqlite3.connect(next((Path(directory)/'backups').glob('*.sqlite3'))) as backup:
                 self.assertEqual(backup.execute('SELECT id FROM shipments').fetchone()[0],7)

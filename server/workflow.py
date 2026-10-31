@@ -11,7 +11,7 @@ INVOICE_KEYS = ('shipping', 'additional', 'terminal')
 CLOSURE_KEYS = ('empty_returns', 'shipping_final')
 TEXT_FIELDS = ('bl', 'description', 'terminal', 'liner', 'handler', 'field_agent', 'import_officer', 'sgd', 'container_size', 'delivery_location')
 # draft_received remains a legacy date so older entries and audit history survive.
-DATE_KEYS = tuple(k for k in DATE_FIELDS if k not in ('gate_out', 'warehouse')) + ('draft_received', 'draft_approved', 'client_invoiced')
+DATE_KEYS = tuple(k for k in DATE_FIELDS if k not in ('gate_out', 'warehouse')) + ('draft_received', 'draft_approved', 'client_invoiced', 'discharge')
 ACTION_KEYS = ('shipping_invoice', 'rotation', 'paar', 'obl', 'draft', 'draft_approval', 'final_assessment', 'assessment_details', 'duty_receipt', 'terminal_invoice', 'tdo_age', 'ecd', 'closure', 'reported_blocker', 'additional_invoice', 'shipping_payment', 'additional_payment', 'terminal_payment', 'delivery_progress')
 
 
@@ -121,8 +121,10 @@ def derive(record, data, events, operational=False, as_of=None):
     if problems:
         closure_missing.append('Movement/release exceptions reconciled')
     r['closure_missing'] = closure_missing
+    # Old report berth dates retain their meaning; reviewed carrier arrivals use discharge.
+    arrived = d.get('discharge') if data['arrival_basis'] == 'discharge' else d.get('discharge') or d['berth']
     if operational and data['reconciled']:
-        r['state'] = ('Completed' if data['completed'] and not closure_missing else 'Delivered' if reconciled and delivered == total else 'In delivery' if gated or delivered else 'In clearing' if d['berth'] else 'Awaiting arrival')
+        r['state'] = ('Completed' if data['completed'] and not closure_missing else 'Delivered' if reconciled and delivered == total else 'In delivery' if gated or delivered else 'In clearing' if arrived else 'Awaiting arrival')
         r['review_status'] = 'Owner recorded · test'
         r['state_note'] = 'Owner-recorded progress; quantities reconciled by count, without independent verification.'
     else:
