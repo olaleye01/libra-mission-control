@@ -16,7 +16,7 @@ Open [http://127.0.0.1:8800](http://127.0.0.1:8800). On first use, create your o
 
 The service binds only to 127.0.0.1. This is local development software, not a deployed Dokploy service. Public/reverse-proxy deployment needs a separate reviewed access/network configuration. Do not bind it publicly or reuse the temporary browser-QA password for owner access.
 
-Use the button beside the Libra logo to collapse the sidebar into a compact navigation rail or expand it again. The desktop choice is remembered in this browser. On phones, use the menu button to open navigation; close it with the sidebar close button, Escape, or a tap outside.
+Use the button beside the Libra logo to collapse the sidebar into a compact navigation rail or expand it again. The desktop choice is remembered in this browser. On phones and tablets, use the menu button to open navigation; close it with the sidebar close button, Escape, or a tap outside. Overview shows up to five shipments; **View all** opens the full register with the current client and stage selection.
 
 Optional arguments:
 
@@ -136,6 +136,8 @@ Migration 6 keeps tracking settings and observations separate from imports and o
 
 ## Libra Circle visual identity
 
-The dashboard uses the official Libra Circle logo and navy/gold/blue palette, with the existing Georgia headings and system sans-serif interface typography retained. The redesigned shell, overview workbench, registers, import views, QAC, coordination desk, forms, shipment drawers and responsive navigation share one stylesheet. The official images are bundled locally under `frontend/assets/`; viewing the app does not request company-site assets or external fonts.
+The dashboard uses Libra Circle's official mark and navy/gold/blue palette, with the existing Georgia headings and system sans-serif interface typography retained. The light navigation, overview register and workbench, imports, QAC, coordination desk, forms and shipment drawers share one responsive stylesheet. The official images are bundled locally under `frontend/assets/`; viewing the app does not request company-site assets or external fonts.
+
+The welcome panel includes a decorative native-WebGL port diorama: vessel, berth/crane, terminal, truck and warehouse follow a 24-second loop. It provides a pause control, respects reduced-motion preferences and retains an SVG fallback where WebGL is unavailable. Rendering stops while the panel or browser page is hidden. The animation does not display live shipment activity.
 
 Brand assets are served through two fixed public image routes. Application data, source reports and credentials remain private. See `docs/dashboard_redesign_validation.md` for visual and functional checks.

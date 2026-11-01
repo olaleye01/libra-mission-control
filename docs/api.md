@@ -137,7 +137,7 @@ The saved item has id, created_at and updated_at. Manual item status does not po
 
 ## Boundaries
 
-No payment execution, deletion, notification-send, Hermes-shell or gateway-control endpoint is included. No arbitrary file path is accepted. Only the four explicit frontend files and two fixed brand-image paths are served; import originals, backups and application data are not static assets. Unknown routes return 404, known routes with another method return 405, and oversize requests return 413 before their body is read.
+No payment execution, deletion, notification-send, Hermes-shell or gateway-control endpoint is included. No arbitrary file path is accepted. Only the five explicit frontend files and two fixed brand-image paths are served; import originals, backups and application data are not static assets. The decorative port animation is a bundled local script, with no external assets or services. Unknown routes return 404, known routes with another method return 405, and oversize requests return 413 before their body is read.
 
 The owner can view/edit all clients; staff-specific roles remain deferred. Client filtering is applied on the server but is not presented as tenant authorization. Deployment is loopback-only; proxy hosts/TLS and additional access models require explicit future configuration. No live reminder activation or VPS change is implied.
 

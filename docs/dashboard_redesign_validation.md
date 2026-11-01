@@ -1,5 +1,23 @@
 # Libra Circle dashboard redesign
 
+## Welcome diorama, November 2026
+
+The owner requested a darker, more dimensional port illustration while retaining the ship-to-warehouse flow. The welcome panel now uses a local native-WebGL renderer with shaded vessel, crane, container, forklift, truck and warehouse models; cyan rim details; a fitted isometric camera; and the same 24-second journey. The original animated SVG remains a fallback. A pause button works with either renderer, reduced motion starts still, and rendering stops when the welcome panel or page is hidden. No shipment facts, remote assets or new runtime dependencies are used.
+
+Browser QA used a temporary page containing only the decorative scene, with no sign-in form or application data. The 3D scene rendered successfully, screenshots showed the ship, terminal and truck phases, the pause frame stayed byte-for-byte unchanged across successive captures, and the control resumed the loop. The scene fitted a 390px viewport without horizontal overflow and the browser reported no console errors or warnings. The full sign-in layout was source-reviewed; the owner's signed-in dashboard was not logged out for this check.
+
+`python3 -m unittest discover -s tests -v` ran 141 tests, with 140 passing and one private-source fixture skipped. The new fixed script route is covered for exact content and GET-only access. JavaScript syntax and Git whitespace checks passed. A focused no-WebGL check verified fallback pause and reduced-motion default handling. The local application returned HTTP 200 for the new script after restart; existing shipment/source and owner-session table fingerprints were unchanged.
+
+## Taste refresh, November 2026
+
+The later refresh applies Taste's Achromatic ledger direction (seed 1855407489), retaining the official mark, palette and existing type. The two dealt shell options were redrawn or adapted because the owner needs named client and department navigation and a collapsible sidebar. The current layout uses a light labelled sidebar, an Import Officer briefing, a proportional five-stage filter strip and a five-row register preview alongside coordination and carrier status. A full-register link preserves the current client, stage, search and review filters. Additional carrier exceptions remain accessible in an expandable list. Unknown quantities remain unknown, and no shipment counts are fabricated.
+
+Browser checks used an isolated test workspace at 1440, 768 and 390px. They confirmed stage filtering, preserving stage and search filters when opening the full register, opening a job on desktop and phone, tablet navigation and Escape, desktop sidebar collapse/expand, and the import and QAC screens. The viewport did not overflow horizontally in the measured phone and desktop views. The first phone shipment begins at approximately 686px in an 844px viewport; the five-stage and client strips scroll within their own frames. The sign-in layout was visually checked with the disposable QA account.
+
+`python3 -m unittest discover -s tests -v` ran 140 tests successfully with one private-source fixture skipped; `node --check frontend/app.js` and `git diff --check` passed. A focused local check confirmed that three carrier exceptions each retain a direct job link. Taste source lint reported zero failures and 13 warnings: scope/status labels, shadows on actual overlays, and dashes used in existing interface copy and unknown values. Taste's separate CDP inspector was not run; responsive checks used the in-app browser instead. Screenshots are private and use test data.
+
+## Earlier branding refresh
+
 ## Brand and scope
 
 The owner requested a full visual revamp using Libra Circle’s website branding while retaining the current typography. The official transparent logo and icon are bundled unchanged:

@@ -10,6 +10,7 @@ backups/
 *.sqlite*
 *.db*
 .venv/
+.taste-skill/
 
 # Private planning, client evidence and local setup notes stay on this machine.
 /START_HERE.md

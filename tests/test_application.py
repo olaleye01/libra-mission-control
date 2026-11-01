@@ -230,6 +230,13 @@ class HttpFixture(unittest.TestCase):
 
 
 class ApiTests(HttpFixture):
+    def test_port_animation_is_a_fixed_local_script_asset(self):
+        status, data, headers = self.call('GET', '/port-scene.js')
+        self.assertEqual(status, 200)
+        self.assertIn('javascript', headers['Content-Type'])
+        self.assertEqual(data, (ROOT / 'frontend' / 'port-scene.js').read_bytes())
+        self.assertEqual(self.call('POST', '/port-scene.js', {})[0], 405)
+
     def test_public_brand_assets_are_fixed_binary_routes_without_private_file_access(self):
         for name, mime in (('libra-circle-logo.png', 'image/png'), ('libra-circle-icon.webp', 'image/webp')):
             path = '/assets/' + name
