@@ -18,6 +18,8 @@ The service binds only to 127.0.0.1. This is local development software, not a d
 
 Use the button beside the Libra logo to collapse the sidebar into a compact navigation rail or expand it again. The desktop choice is remembered in this browser. On phones and tablets, use the menu button to open navigation; close it with the sidebar close button, Escape, or a tap outside. Overview shows up to five shipments; **View all** opens the full register with the current client and stage selection.
 
+The Overview pairs an Officer’s briefing with a clearing snapshot, the five stage filters and a compact shipment register. The briefing links to next actions on up to three different jobs; its headline counts action items, not shipments. The attention panel lists up to four distinct jobs with recorded holds, reported blockers or review findings. Every panel follows the selected department and client. Historical entries retain their report cut-off or explicitly state that it was not supplied. Unknown container quantities remain separate from the recorded total. Team queues and Carrier watch sit beside the register on desktop; connection details are available in a small disclosure below recent imports. No performance percentages, trends or external connection claims are generated.
+
 Optional arguments:
 
 ```bash

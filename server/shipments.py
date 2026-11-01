@@ -6,6 +6,73 @@ from records import records
 from operations import date, choice
 from coordination import TEAMS, STATUSES, QUEUES, counts
 from client_scope import filtered
+from workflow import today
+
+
+def overview_highlights(jobs):
+    """Summarise existing evidence; ordering never creates a new workflow deadline."""
+    priorities = {'tdo_age': 1, 'duty_receipt': 2, 'delivery_progress': 2, 'ecd': 2,
+                  'draft_approval': 3, 'final_assessment': 3, 'assessment_details': 3,
+                  'shipping_invoice': 4, 'rotation': 4, 'paar': 4, 'obl': 4,
+                  'terminal_invoice': 4, 'closure': 5}
+    next_actions, attention = [], []
+    review_count, hold_count = 0, 0
+    for job in jobs:
+        historical = bool(job.get('batch_id')) and not job['operation']['reconciled']
+        active = [item for item in job['actions'] if item['status'] != 'resolved']
+        context = {'shipment_id': job['id'], 'bl': job['bl'], 'client_name': job['client_name'],
+                   'historical': historical}
+        for item in active:
+            if 'my_next' not in item['queues']:
+                continue
+            priority = 0 if item.get('blocks_step') or item.get('blocker') else priorities.get(item['key'], 6)
+            next_actions.append((priority, job['id'], item['key'], {
+                **context, 'key': item['key'], 'next_action': item['next_action'],
+                'status': item['status'], 'as_of': item['as_of'], 'source': item.get('source', ''),
+                'kind': item['kind'], 'tab': 'coordination' if item['kind'] == 'coordination' else 'followups'}))
+        warnings = [issue for issue in job['issues'] if issue['severity'] == 'warning']
+        holds = [item for item in active if item.get('blocks_step')]
+        blockers = [item for item in active if item.get('blocker')]
+        review_count += bool(warnings)
+        hold_count += bool(holds)
+        # The count is jobs, not issues; repeated BL values still have different internal IDs.
+        if not (warnings or holds or blockers):
+            continue
+        as_of = (job.get('report_date') if not job['operation']['reconciled'] else
+                 next((a['as_of'] for a in active if a['as_of']), None) or today())
+        if holds:
+            item = sorted(holds, key=lambda item: (item['blocks_step'], item['key']))[0]
+            title = 'Process hold · ' + {'tdo': 'TDO', 'gate_out': 'Gate-out', 'warehouse': 'Warehouse arrival',
+                                       'completion': 'Completion'}[item['blocks_step']]
+            detail = item.get('title') or item['next_action']
+            tab, kind, priority = 'coordination', 'hold', 0
+        elif blockers:
+            item = sorted(blockers, key=lambda item: item['key'])[0]
+            title, detail = 'Reported blocker', item['blocker']
+            tab = 'coordination' if item['kind'] == 'coordination' else 'followups'
+            kind, priority = 'blocker', 1
+        else:
+            # A warning describes a record question, not confirmed missing documents or noncompliance.
+            issue = sorted(warnings, key=lambda issue: (issue.get('code', ''), issue.get('field', ''), issue['message']))[0]
+            title, detail = 'Record needs review', issue['message']
+            tab, kind, priority = 'milestones', 'review', 2
+        attention.append((priority, job['id'], {**context, 'title': title, 'detail': detail,
+                                              'tab': tab, 'kind': kind, 'as_of': as_of}))
+
+    # Several actions for one BL must not crowd other jobs out of the short briefing.
+    selected, seen = [], set()
+    for _, identifier, _, item in sorted(next_actions, key=lambda item: item[:3]):
+        if identifier not in seen:
+            seen.add(identifier)
+            selected.append(item)
+        if len(selected) == 3:
+            break
+    return {'briefing': {'action_count': len(next_actions),
+                         'shipment_count': len({item[1] for item in next_actions}),
+                         'undated_count': sum(item[3]['as_of'] is None for item in next_actions),
+                         'items': selected},
+            'attention': {'shipment_count': len(attention), 'review_count': review_count, 'hold_count': hold_count,
+                          'items': [item[2] for item in sorted(attention, key=lambda item: item[:2])[:4]]}}
 
 
 def all_records(app, client_id=None, as_of=None):
@@ -34,6 +101,7 @@ def register(route, ApiError):
                 "action_count": sum(a["status"] != "resolved" for r in records for a in r["actions"]),
                 "queue_counts": counts([a for r in records for a in r["actions"]]),
                 "tracking": req.app.tracking.summary(records),
+                **overview_highlights(records),
                 "mode": "test", "hermes": "not_connected", "notifications": "disabled"}
 
     @route("GET", "/api/shipments")

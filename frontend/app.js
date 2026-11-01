@@ -140,8 +140,8 @@ async function navigate(page,client=state.client) {
 function heading() {
   const text={overview:['Shipment overview','Track the whole journey. Know what needs your attention.'],shipments:['Shipment register','Every client, every milestone, in one shared register.'],imports:['Import centre','Preview first. Keep the source. Apply only what you have reviewed.'],actions:['Import Officer desk','Coordinate the job. See the next action, responsible team and response you are waiting for.'],qac:['QAC review queue','Review inconsistencies before they become operational assumptions.'],clients:['Clients & departments','Organise client ownership, keep names current and restore hidden clients.']};
   const department=state.departments.find(d=>String(d.id)===state.department)?.name||'All departments';
-  const controls=state.page==='clients'?`<button class="button secondary" id="new-department">+ Add department</button><button class="button primary" id="new-client">+ Add client</button>`:`<button class="button secondary" data-go="${state.page==='imports'?'shipments':'imports'}">${icon(state.page==='imports'?'ship':'file')}${state.page==='imports'?'View register':'Import history'}</button>${state.page!=='imports'?`<button class="button primary" id="new-job">+ Create shipment</button>`:''}`;
-  return `<div class="page-heading ${state.page==='clients'?'directory-heading':''}"><div><span class="eyebrow">${esc(department)} / Clearing operations</span><h1>${text[state.page][0]}</h1><p>${text[state.page][1]}</p></div><div class="heading-actions">${controls}</div></div>`;
+  const controls=state.page==='clients'?`<button class="button secondary" id="new-department">+ Add department</button><button class="button primary" id="new-client">+ Add client</button>`:`<button class="button secondary" data-go="${state.page==='imports'?'shipments':'imports'}">${icon(state.page==='imports'?'ship':'file')}${state.page==='imports'?'View register':'Import history'}</button>${state.page!=='imports'?`<button class="button primary" id="new-job" aria-label="Create shipment">${state.page==='overview'?'<span class="create-job-full">+ Create shipment</span><span class="create-job-short">+ New job</span>':'+ Create shipment'}</button>`:''}`;
+  return `<div class="page-heading ${state.page==='clients'?'directory-heading':''}"><div><span class="eyebrow">${esc(department)} / Clearing operations</span><h1>${text[state.page][0]}</h1>${state.page==='overview'?'':`<p>${text[state.page][1]}</p>`}</div><div class="heading-actions">${controls}</div></div>`;
 }
 function tabs() {
   return `<div class="context-strip"><div class="client-tabs"><button class="client-tab ${!state.client?'active':''}" data-client="">All clients</button>${state.clients.map(c=>`<button class="client-tab ${state.client===String(c.id)?'active':''}" data-client="${c.id}">${esc(c.name)}<span class="tab-number">${number(c.shipment_count)}</span></button>`).join('')}</div><span class="test-badge">Test workspace</span></div>`;
@@ -152,10 +152,35 @@ function cards(overview) {
   return `<div class="state-grid" aria-label="Shipment stages">${states.map((s,i)=>`<button class="state-card stage-${i} ${state.filter===s?'selected':''}" data-state="${s}" aria-pressed="${state.filter===s}" title="${notes[i]}"><span class="card-label">${s}</span><strong class="card-number">${number(overview.states[s])}</strong><progress class="stage-meter" aria-hidden="true" value="${Number(overview.states[s])||0}" max="${total||1}"></progress></button>`).join('')}</div>`;
 }
 function overviewPulse(overview) {
-  const count=Number(overview.queue_counts?.my_next)||0;
-  return `<section class="overview-pulse" aria-label="Import Officer briefing"><div class="pulse-copy"><span class="pulse-label">Officer’s briefing</span><p><strong>${number(count)}</strong> ${count===1?'next action':'next actions'} assigned to the Import Officer.</p><small>Historical findings follow the report cut-off.</small></div><button type="button" class="button secondary" data-desk-queue="my_next">Open my desk ${icon('arrow')}</button></section>`;
+  const briefing=overview.briefing||{},count=Number(briefing.action_count??overview.queue_counts?.my_next)||0;
+  const items=Array.isArray(briefing.items)?briefing.items:[];
+  const sharedEvidence=items.length>0&&items.every(item=>item.historical===items[0].historical&&item.as_of===items[0].as_of);
+  return `<section class="overview-briefing panel" aria-labelledby="briefing-title"><div class="overview-section-heading"><h2 id="briefing-title">Officer’s briefing</h2><button type="button" class="text-link" data-desk-queue="my_next">View desk ${icon('arrow')}</button></div><p class="briefing-total"><strong>${number(count)}</strong><span>${count===1?'next action':'next actions'} to coordinate</span></p><p class="briefing-note">${count?(sharedEvidence?overviewEvidence(items[0]):'Historical dates follow each report cut-off.'):'No open next actions assigned in this view.'}</p>${items.length?`<div class="briefing-list">${items.map(item=>`<button type="button" class="briefing-item" data-shipment="${esc(item.shipment_id)}" data-action-key="${esc(item.key)}" data-open-tab="${item.kind==='coordination'?'coordination':'followups'}"><span class="briefing-item-heading"><strong>${esc(item.bl)}</strong><span>${esc(item.client_name)}</span></span><span class="briefing-item-text">${esc(item.next_action)}</span>${sharedEvidence?'':`<span class="briefing-item-meta">${overviewEvidence(item)}</span>`}</button>`).join('')}</div>`:'<p class="overview-empty-note">Record milestones and assignments on a job to keep its next action here.</p>'}</section>`;
+}
+function overviewEvidence(item) {
+  return item.historical?(item.as_of?'Report cut-off '+date(item.as_of):'Historical report · cut-off not supplied'):(item.as_of?'Owner record · as of '+date(item.as_of):'Owner record');
+}
+function overviewSnapshot(overview) {
+  const unknown=Number(overview.unknown_container_count)||0;
+  return `<section class="overview-snapshot panel" aria-labelledby="snapshot-title"><div class="overview-section-heading"><h2 id="snapshot-title">Clearing snapshot</h2><span class="report-label">${esc(state.clients.find(c=>String(c.id)===state.client)?.name||'All visible clients')}</span></div><p class="snapshot-total"><strong>${number(overview.total)}</strong><span>Shipments in view</span></p><div class="snapshot-metrics"><dl><dt>Containers recorded</dt><dd>${number(overview.known_container_total)}</dd></dl><dl><dt>Records to review</dt><dd>${number(overview.rows_with_issues)}</dd></dl></div><p class="snapshot-note">${unknown?`Container quantity remains unknown for ${number(unknown)} ${unknown===1?'job':'jobs'}.`:'Recorded quantities across this view.'} Imported stages remain historical proposals until reconciled.</p></section>`;
+}
+function overviewAttention(overview) {
+  const attention=overview.attention||{},items=Array.isArray(attention.items)?attention.items:[];
+  const count=Number(attention.shipment_count)||0;
+  const sharedEvidence=items.length>0&&items.every(item=>item.historical===items[0].historical&&item.as_of===items[0].as_of);
+  const row=item=>`<button type="button" class="attention-item" data-shipment="${esc(item.shipment_id)}" data-open-tab="${['coordination','followups'].includes(item.tab)?item.tab:'milestones'}"><span class="attention-item-heading"><strong>${esc(item.bl)}</strong><span class="attention-kind">${esc(item.kind==='review'?'Review':item.title)}</span></span><span class="attention-item-text">${esc(item.detail)}</span><span class="attention-item-meta">${esc(item.client_name)}${sharedEvidence?'':' · '+overviewEvidence(item)}</span></button>`;
+  return `<section class="overview-attention panel" aria-labelledby="attention-title">
+    <div class="overview-section-heading"><h2 id="attention-title">Exceptions & attention</h2><span class="count-tag">${number(count)}</span></div>
+    <p class="attention-summary">${count?`${number(count)} ${count===1?'job needs':'jobs need'} review or follow-up.`:'No recorded exceptions in this view.'} Information gaps require confirmation.${sharedEvidence?`<span class="attention-evidence">${overviewEvidence(items[0])}</span>`:''}</p>
+    ${items.length?`<div class="attention-list">${items.slice(0,2).map(row).join('')}${items.length>2?`<details class="attention-more"><summary>Show ${number(items.length-2)} more priority jobs</summary>${items.slice(2).map(row).join('')}</details>`:''}</div>`:'<p class="overview-empty-note">Recorded holds, reported blockers and review findings appear here.</p>'}
+    <div class="overview-attention-links"><button type="button" class="text-link" data-go="qac">Review records ${icon('arrow')}</button><button type="button" class="text-link" data-desk-queue="clearing_blockers">View blockers ${icon('arrow')}</button></div>
+  </section>`;
+}
+function overviewLayout(overview) {
+  return `<div class="overview-dashboard"><div class="overview-primary"><div class="overview-top-grid">${overviewPulse(overview)}${overviewSnapshot(overview)}</div>${cards(overview)}<section id="register-panel" class="panel overview-register" aria-label="Shipment register"></section>${lowerPanels()}</div><aside class="overview-rail" aria-label="Team coordination and shipment attention"><section class="desk-home panel"><div class="desk-home-heading"><h2 class="panel-title">Across your teams</h2><button class="text-link" data-go="actions">View desk ${icon('arrow')}</button></div><p class="detail-note">Open coordination items. Queues can overlap.</p>${deskCards(overview.queue_counts,true)}</section><div id="overview-tracking">${trackingOverview(overview.tracking)}</div><div id="overview-attention">${overviewAttention(overview)}</div></aside></div>`;
 }
 async function render() {
+  $('#main').classList.toggle('overview-page',state.page==='overview');
   clearTimeout(overviewTrackingTimer);
   const version=++state.version; $('#breadcrumb').textContent=names[state.page];
   $$('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===state.page));
@@ -170,15 +195,16 @@ async function render() {
     }
     const query=workspaceQuery();
     const overview=await api('/api/overview?'+query); if(version!==state.version)return;
-    const top=heading()+tabs()+(state.page==='overview'?overviewPulse(overview):'')+(state.page==='qac'?notice(`${number(overview.rows_with_issues)} records have review findings. A finding describes a source-data question, not confirmed noncompliance.`,true):cards(overview));
+    const top=heading()+tabs()+(state.page==='qac'?notice(`${number(overview.rows_with_issues)} records have review findings. A finding describes a source-data question, not confirmed noncompliance.`,true):state.page==='overview'?'':cards(overview));
     const register=`<div id="register-panel" class="panel ${state.page==='overview'?'overview-register':''}"></div>`;
-    $('#main').innerHTML=top+(state.page==='overview'?`<div class="overview-layout">${register}<div class="overview-workbench"><section class="desk-home panel"><div class="desk-home-heading"><h2 class="panel-title">Across your teams</h2><button class="text-link" data-go="actions">View desk ${icon('arrow')}</button></div><p class="detail-note">Open coordination items. Queues can overlap.</p>${deskCards(overview.queue_counts,true)}</section><div id="overview-tracking">${trackingOverview(overview.tracking)}</div></div></div>${lowerPanels()}`:register);
+    $('#main').innerHTML=top+(state.page==='overview'?overviewLayout(overview):register);
     await loadTable(version);
     if(state.page==='overview'&&overview.tracking?.service_running)overviewTrackingTimer=setTimeout(()=>refreshTrackingOverview(version),15000);
   } catch(error) { if(version===state.version)$('#main').innerHTML=heading()+`<div class="inline-error" role="alert">${esc(error.message)}<br><button class="button secondary" id="retry-load">Try again</button></div>`; }
 }
 function lowerPanels() {
-  return `<div class="lower-grid"><section class="panel"><div class="panel-header"><div class="panel-title">Recent imports</div><button class="text-link" data-go="imports">View all ${icon('arrow')}</button></div><div class="small-panel-body">${state.batches.length?state.batches.slice(0,3).map(b=>`<div class="import-row"><span class="file-icon">${icon('file')}</span><div><strong>${esc(b.filename)}</strong><small>${esc(b.client_name)} · ${number(b.summary.shipments)} shipments · ${b.report_date?'Cut-off '+date(b.report_date):'Cut-off not supplied'}</small></div><button class="badge ${b.status==='preview'?'preview':''}" data-batch="${b.id}">${b.status==='preview'?'Review preview':'Applied to test'}</button></div>`).join(''):'<div class="import-row"><span class="file-icon">'+icon('file')+'</span><div><strong>No reports imported yet</strong><small>Your originals and import history will appear here.</small></div></div>'}</div></section><section class="panel"><div class="panel-header"><div class="panel-title">Workspace connections</div><span class="count-tag">Status</span></div><div class="small-panel-body"><div class="connection-row"><span>${icon('database')}Shipment register</span><span class="connection-state on">Available</span></div><div class="connection-row"><span>${icon('link')}Hermes fleet</span><span class="connection-state">Not connected</span></div><div class="connection-row"><span>${icon('bell')}Telegram & reminders</span><span class="connection-state">Delivery disabled</span></div></div></section></div>`;
+  const batches=state.batches.filter(batch=>!state.client||String(batch.client_id)===state.client);
+  return `<div class="overview-imports"><section class="panel"><div class="panel-header"><h2 class="panel-title">Recent imports</h2><button class="text-link" data-go="imports">View all ${icon('arrow')}</button></div><div class="small-panel-body">${batches.length?batches.slice(0,3).map(b=>`<div class="import-row"><span class="file-icon">${icon('file')}</span><div><strong>${esc(b.filename)}</strong><small>${esc(b.client_name)} · ${number(b.summary.shipments)} shipments · ${b.report_date?'Cut-off '+date(b.report_date):'Cut-off not supplied'}</small></div><button class="badge ${b.status==='preview'?'preview':''}" data-batch="${b.id}">${b.status==='preview'?'Review preview':'Applied to test'}</button></div>`).join(''):'<div class="import-row"><span class="file-icon">'+icon('file')+'</span><div><strong>No reports imported yet</strong><small>Your originals and import history will appear here.</small></div></div>'}</div></section><details class="overview-connections"><summary>Workspace connections</summary><div class="connection-row"><span>${icon('database')}Shipment register</span><span class="connection-state on">Available</span></div><div class="connection-row"><span>${icon('link')}Hermes fleet</span><span class="connection-state">Not connected</span></div><div class="connection-row"><span>${icon('bell')}Telegram & reminders</span><span class="connection-state">Delivery disabled</span></div></details></div>`;
 }
 async function loadTable(version=state.version) {
   const ticket=++tableVersion;
@@ -375,7 +401,7 @@ function coordinationForm(r) {
   const items=Object.values(r.operation.coordination);
   return `${notice('Record team tasks and regulatory issues manually. No authority requirements are inferred. An optional process hold applies only when you explicitly record it.')}<div class="coordination-list">${items.map(i=>`<article class="coordination-row"><div><span class="badge">${esc(statusNames[i.status])}</span><span class="team-tag">${esc(teamNames[i.team])}</span><h3>${esc(i.title)}</h3><p>${esc(i.next_action)}</p><p>${esc(i.responsible||rolePerson(r,i.team)||'Unassigned')}${i.authority?' · '+esc(i.authority):''}</p>${i.blocker?`<p>${i.status==='resolved'?'Earlier blocker':'Blocker'}: ${esc(i.blocker)}</p>`:''}<p>Source: ${esc(i.source)}</p>${i.blocks_step?`<p class="hold-label">Process hold: ${esc({tdo:'TDO',gate_out:'Gate-out',warehouse:'Warehouse arrival',completion:'Completion'}[i.blocks_step])}</p>`:''}${i.resolution_date?`<p>${i.status==='resolved'?'Resolution':'Last resolution'}: ${date(i.resolution_date)} · ${esc(i.resolution_note)}</p>`:''}</div><button type="button" class="button secondary" data-edit-coordination="${i.id}">Edit item</button></article>`).join('')||'<p class="detail-note">No manual coordination items yet.</p>'}</div><h3 id="coordination-heading">Add coordination item</h3><form id="coordination-edit"><input name="item_id" type="hidden"><div class="form-grid">${inputField('title','Issue / task title','','text','required maxlength="500"')}${selectField('category','Work area','clearing',[['clearing','Clearing'],['delivery','Delivery'],['closure','Closure'],['regulatory','Regulatory']])}${selectField('team','Responsible team','import_officer',Object.entries(teamNames))}${inputField('responsible','Responsible person (optional)')}${inputField('authority','Regulatory authority (optional)')}${selectField('status','Item status','open',Object.entries(statusNames))}${inputField('blocker','Reported blocker','','text','maxlength="1000"')}${inputField('next_action','Next action','','text','required maxlength="1000"')}${inputField('source','Supporting source','','text','required maxlength="500"')}${selectField('blocks_step','Explicit process hold','',[['','No process hold'],['tdo','TDO'],['gate_out','Gate-out'],['warehouse','Warehouse arrival'],['completion','Completion']])}${inputField('resolution_note','Resolution note (required when resolved)','','text','maxlength="1000"')}${inputField('resolution_date','Resolution date (required when resolved)','','date')}</div><p class="detail-note">Responsible person may be left blank to use the job’s Import Officer / Field Agent for that team. Other teams remain unassigned until you name someone. Reminder recipient: Owner.</p>${commandFooter('Save coordination item',false)}<button type="button" class="button secondary" id="new-coordination">Start a new item</button></form>`;
 }
-function bindFollowup(r) {
+function bindFollowup(r,selectedKey='') {
   const form=$('#followup-edit');if(!form)return;
   const hint=()=>$('#assignment-hint').textContent='Job assignment for this team: '+(rolePerson(r,formValue(form,'team'))||'Unassigned')+'. Reminder recipient: Owner.';
   const populate=()=>{
@@ -385,9 +411,11 @@ function bindFollowup(r) {
   };
   form.elements.namedItem('key').addEventListener('change',populate);
   form.elements.namedItem('team').addEventListener('change',hint);
+  const select=form.elements.namedItem('key');
+  if([...select.options].some(option=>option.value===selectedKey))select.value=selectedKey;
   populate();
 }
-function bindCoordination(r) {
+function bindCoordination(r,selectedKey='') {
   const form=$('#coordination-edit');if(!form)return;
   const keys=['title','category','team','responsible','authority','status','blocker','next_action','source','blocks_step','resolution_note','resolution_date'];
   const fill=id=>{
@@ -404,8 +432,9 @@ function bindCoordination(r) {
     const item=Object.fromEntries(keys.map(k=>[k,formValue(f,k)||(k==='resolution_date'?null:'')]));
     saveCommand(f,`/api/shipments/${r.id}/coordination`,{revision:r.revision,item_id:formValue(f,'item_id')||null,item,...commonCommand(f)});
   });
+  if(r.operation.coordination[selectedKey])fill(selectedKey);
 }
-function renderDetail(tab='milestones') {
+function renderDetail(tab='milestones',selectedKey='') {
   clearTimeout(trackingTimer);const trackingRender=++trackingEpoch;
   const r=state.detail,d=r.dates,editable=Boolean(r.id),o=r.operation;
   const available=editable?[['milestones','Summary'],['edit','Update job'],['invoices','Invoices'],['movements','Movements'],['followups','Follow-ups'],['coordination','Team coordination'],['tracking','Carrier tracking'],['source','Source & history']]:[['milestones','Milestones'],['source','Original source']];
@@ -451,7 +480,7 @@ function renderDetail(tab='milestones') {
     e.preventDefault();const f=e.currentTarget;
     saveCommand(f,`/api/shipments/${r.id}/movements`,{revision:r.revision,kind:formValue(f,'kind'),date:formValue(f,'date'),quantity:Number(formValue(f,'quantity')),supersedes:formValue(f,'supersedes')||null,confirm_duplicate:f.elements.namedItem('confirm_duplicate').checked,...commonCommand(f)});
   });
-  bindFollowup(r);bindCoordination(r);
+  bindFollowup(r,selectedKey);bindCoordination(r,selectedKey);
   $('#followup-edit')?.addEventListener('submit',e=>{
     e.preventDefault();const f=e.currentTarget;
     saveCommand(f,`/api/shipments/${r.id}/followups`,{revision:r.revision,...Object.fromEntries(['key','team','status','responsible','blocker','next_action','source'].map(k=>[k,formValue(f,k)])),...commonCommand(f)});
@@ -526,7 +555,7 @@ document.addEventListener('click',async event=>{
     if(button?.dataset.batch){await openBatch(button.dataset.batch);return;}
     if(button?.hasAttribute('data-preview-issues')){state.previewIssues=button.dataset.previewIssues==='1';state.previewPage=1;renderPreview();return;}
     if(button?.dataset.previewPage){state.previewPage+=Number(button.dataset.previewPage);renderPreview();return;}
-    const shipment=button?.dataset.shipment||row?.dataset.shipment;if(shipment){await openShipment(shipment);if(button?.dataset.openTab)renderDetail(button.dataset.openTab);return;}
+    const shipment=button?.dataset.shipment||row?.dataset.shipment;if(shipment){await openShipment(shipment);if(button?.dataset.openTab)renderDetail(button.dataset.openTab,button.dataset.actionKey||'');return;}
     const previewRow=button?.dataset.previewRow||row?.dataset.previewRow;if(previewRow){openPreviewRow(previewRow);return;}
     if(button?.dataset.detailTab){renderDetail(button.dataset.detailTab);return;}
     if(button?.hasAttribute('data-close-detail')){$('#detail-dialog').close();return;}
@@ -665,10 +694,11 @@ function trackingOverview(t){
   if(!t)return '';
   const running=Boolean(t.service_running),monitored=Number(t.monitored_count)||0,finished=Number(t.finished_count)||0,attention=Number(t.attention_count)||0;
   const items=Array.isArray(t.attention)?t.attention:[];
+  const hasJobs=monitored>0||finished>0||attention>0;
   const attentionJob=item=>`<button type="button" class="tracking-attention-job" data-shipment="${esc(item.shipment_id)}" data-open-tab="tracking"><span><strong>${esc(item.bl||'Shipment '+item.shipment_id)}</strong><small>${esc(item.client_name||'')}</small></span><span>${esc(item.message||'Carrier tracking needs attention.')}</span>${icon('arrow')}</button>`;
-  const status=!running?'Service unavailable':attention?'Needs attention':monitored?'Automatic checks scheduled':'Watching for shipments';
-  const description=!running?'Service stopped. Last known dates are retained; live changes have not been checked.':monitored?'MSC checks run in the background until empty return. Source history stays with each job.':'Waiting for eligible MSC jobs. Historical reports remain separate from live tracking.';
-  return `<section class="tracking-overview panel" aria-label="Automatic shipment tracking"><div class="tracking-overview-heading"><div><h2>Carrier watch</h2></div><span class="tracking-status ${!running?'tracking-disabled':attention?'tracking-needs_attention':'tracking-monitoring'}">${status}</span></div><p class="tracking-message">${description}</p><div class="tracking-overview-counts"><span><strong>${number(monitored)}</strong> monitoring</span><span><strong>${number(finished)}</strong> tracking finished</span><span class="${attention?'has-attention':''}"><strong>${running?number(attention):'—'}</strong> ${running?'need attention':'live status unavailable'}</span></div>${items.length?`<div class="tracking-overview-attention">${items.slice(0,2).map(attentionJob).join('')}${items.length>2?`<details class="tracking-more"><summary>Show ${number(items.length-2)} more carrier exceptions</summary>${items.slice(2).map(attentionJob).join('')}</details>`:''}${attention>items.length?'<p class="detail-note">Showing the latest carrier exceptions returned for this view.</p>':''}</div>`:''}</section>`;
+  const status=!running?'Service unavailable':attention?'Needs attention':monitored?'Automatic checks scheduled':'Waiting for jobs';
+  const description=!running?'Service stopped. Last known dates are retained; live changes have not been checked.':monitored?'MSC checks run in the background until empty return. Source history stays with each job.':'No eligible MSC jobs in this view. Historical reports stay outside live tracking.';
+  return `<section class="tracking-overview panel" aria-label="Automatic shipment tracking"><div class="tracking-overview-heading"><div><h2>Carrier watch</h2></div><span class="tracking-status ${!running?'tracking-disabled':attention?'tracking-needs_attention':'tracking-monitoring'}">${status}</span></div><p class="tracking-message">${description}</p>${hasJobs?`<div class="tracking-overview-counts"><span><strong>${number(monitored)}</strong> monitoring</span><span><strong>${number(finished)}</strong> tracking finished</span><span class="${attention?'has-attention':''}"><strong>${running?number(attention):'—'}</strong> ${running?'need attention':'live status unavailable'}</span></div>`:''}${items.length?`<div class="tracking-overview-attention">${items.slice(0,2).map(attentionJob).join('')}${items.length>2?`<details class="tracking-more"><summary>Show ${number(items.length-2)} more carrier exceptions</summary>${items.slice(2).map(attentionJob).join('')}</details>`:''}${attention>items.length?'<p class="detail-note">Showing the latest carrier exceptions returned for this view.</p>':''}</div>`:''}</section>`;
 }
 async function refreshTrackingOverview(version){
   if(version!==state.version||state.page!=='overview')return;
