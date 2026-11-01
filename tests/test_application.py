@@ -230,6 +230,22 @@ class HttpFixture(unittest.TestCase):
 
 
 class ApiTests(HttpFixture):
+    def test_overview_globe_assets_are_fixed_local_read_only_routes(self):
+        status, data, headers = self.call('GET', '/globe-scene.js')
+        self.assertEqual(status, 200)
+        self.assertIn('javascript', headers['Content-Type'])
+        self.assertEqual(data, (ROOT / 'frontend/globe-scene.js').read_bytes())
+        self.assertEqual(self.call('POST', '/globe-scene.js', {})[0], 405)
+        status, land, headers = self.call('GET', '/assets/globe-land.json')
+        self.assertEqual(status, 200)
+        self.assertEqual(headers['Content-Type'], 'application/json')
+        self.assertEqual(land, json.loads((ROOT / 'frontend/assets/globe-land.json').read_text()))
+        self.assertEqual(land['license'], 'Public domain')
+        self.assertTrue(land['polygons'])
+        self.assertEqual(self.call('POST', '/assets/globe-land.json', {})[0], 405)
+        for path in ('/assets/globe-land-LICENSE.txt', '/assets/../../data/libra-test.sqlite3'):
+            self.assertEqual(self.call('GET', path)[0], 404)
+
     def test_port_animation_is_a_fixed_local_script_asset(self):
         status, data, headers = self.call('GET', '/port-scene.js')
         self.assertEqual(status, 200)

@@ -8,6 +8,7 @@
   <link rel="icon" href="/assets/libra-circle-icon.webp" type="image/webp">
   <title>Libra — Shipment Mission Control</title>
   <link rel="stylesheet" href="/styles.css">
+  <script src="/globe-scene.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/port-scene.js" defer></script>
 </head>
@@ -107,7 +108,7 @@
           <g fill="#d4aa59"><circle cx="27" cy="465" r="2.5"/><circle cx="291" cy="348" r="2.5"/><circle cx="554" cy="372" r="2.5"/></g>
         </svg>
       </div>
-      <div class="port-controls"><div class="port-sequence" aria-hidden="true"><span data-port-stage="0" class="active"><small>01</small> Vessel</span><span data-port-stage="1"><small>02</small> Berth</span><span data-port-stage="2"><small>03</small> Terminal</span><span data-port-stage="3"><small>04</small> Truck</span><span data-port-stage="4"><small>05</small> Warehouse</span></div><div class="port-control-footer"><span>One connected journey</span><button id="port-motion" type="button" aria-pressed="false" aria-label="Pause port animation">Pause animation</button></div></div>
+      <div class="port-controls"><div class="port-control-footer"><span>One connected journey</span><button id="port-motion" type="button" aria-pressed="false" aria-label="Pause port animation">Pause animation</button></div></div>
     </div>
     <div class="auth-main"><div class="auth-box">
       <span class="test-badge">LOCAL TEST WORKSPACE</span>

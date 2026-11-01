@@ -23,7 +23,8 @@ from store import Store
 
 ROOT = Path(__file__).resolve().parent.parent
 MAX_BODY = 8 * 1024 * 1024
-ASSETS = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/port-scene.js": "port-scene.js",
+ASSETS = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/port-scene.js": "port-scene.js", "/globe-scene.js": "globe-scene.js",
+          "/assets/globe-land.json": "assets/globe-land.json",
           "/assets/libra-circle-logo.png": "assets/libra-circle-logo.png",
           "/assets/libra-circle-icon.webp": "assets/libra-circle-icon.webp"}
 

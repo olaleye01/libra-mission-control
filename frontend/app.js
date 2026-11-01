@@ -32,6 +32,12 @@ const fields = {pre_alert:'Pre-alert',eta:'ETA',discharge:'Actual destination di
 const sourceHeaders = ['S/N','Pre-alert date','Item description','BOL number','Terminal','Shipping line','ETA','ATD · GZI actual berth','Container count','Container size','PAAR date','OBL received','Assessment date','SGD number','Duty received date','Customs exam','Customs release','Shipping release / DO','TDO','Gate-out','Factory arrival (check section header)','Comments','File handler','Remark','Terminal validity','PCA Final Closure','ECD','Clearing income','Haulage income','Projected total income','Clearing cost','Haulage cost','Projected total expenses','Projected profit'];
 const state = {page:'overview',client:'',filter:'',search:'',issues:false,pageNumber:1,clients:[],batches:[],overview:null,csrf:null,batch:null,previewPage:1,previewIssues:false,detail:null,version:0,deskQueue:'all',deskTeam:'',deskStatus:'',department:null,departments:[],managedClients:[]};
 let searchTimer, toastTimer, trackingTimer, overviewTrackingTimer, trackingEpoch=0, detailVersion = 0, tableVersion = 0;
+let overviewGlobe=null;
+
+function disposeOverviewGlobe() {
+  overviewGlobe?.dispose();
+  overviewGlobe=null;
+}
 
 function date(value) { if (!value) return 'Not recorded'; return new Date(value+'T12:00:00').toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); }
 function number(value) { return Number(value || 0).toLocaleString('en-GB'); }
@@ -88,6 +94,8 @@ function empty(title,text,action='imports',button='Preview a report',symbol='shi
 }
 
 async function showAuth() {
+  disposeOverviewGlobe();
+  clearTimeout(overviewTrackingTimer);
   const session = await api('/api/session');
   state.configured = session.configured;
   $('#boot').hidden=true;
@@ -160,9 +168,30 @@ function overviewPulse(overview) {
 function overviewEvidence(item) {
   return item.historical?(item.as_of?'Report cut-off '+date(item.as_of):'Historical report · cut-off not supplied'):(item.as_of?'Owner record · as of '+date(item.as_of):'Owner record');
 }
+function globeFallback() {
+  return `<svg class="globe-fallback" viewBox="0 0 300 260" aria-hidden="true" focusable="false">
+    <defs><radialGradient id="globe-water" cx="32%" cy="26%" r="78%"><stop stop-color="#2788bd"/><stop offset=".55" stop-color="#07527d"/><stop offset="1" stop-color="#082740"/></radialGradient><clipPath id="globe-outline"><circle cx="150" cy="130" r="111"/></clipPath></defs>
+    <circle cx="150" cy="130" r="111" fill="url(#globe-water)" stroke="#6bb4d0" stroke-width="1"/>
+    <g clip-path="url(#globe-outline)">
+      <g fill="none" stroke="#80bfd3" stroke-width=".65" opacity=".35"><ellipse cx="150" cy="130" rx="111" ry="32"/><ellipse cx="150" cy="130" rx="111" ry="73"/><ellipse cx="150" cy="130" rx="39" ry="111"/><ellipse cx="150" cy="130" rx="78" ry="111"/><path d="M39 130h222M150 19v222"/></g>
+      <g fill="#d2dee0" stroke="#90b8c4" stroke-width=".6"><path d="m119 93 18-8 26 1 16 13 13 4 7 18-9 18-3 28-15 25-13 10-9-14-7-28-12-8-6-19-15-7-7-18z"/><path d="m126 83 1-12 12-8-5-14 14-19 11-8 8 10-9 14 7 14 18 2 2-12 22-2 12 13 18 4 28 9 16 22-6 16-24 3-24-7-15 10-11-18-17-5-10-13-13 8-16 1-6-9z"/><path d="m40 121 17 3 13 12 17 5 10 18-4 27-16 23-6 25-12 16-7-21 2-23-9-20-9-21z"/><path d="m34 57 17-20 23-2 9 17-13 13-4 17-18 8-16-8z"/><path d="m198 170 5-3 1 15-6 13-3-9z"/></g>
+      <g fill="none" stroke="#efbe4a" stroke-width="1.8" stroke-dasharray="2.5 5" stroke-linecap="round"><path d="M59 112Q93 46 140 111"/><path d="M169 65Q112 56 140 111"/><path d="M239 131Q207 185 140 111"/></g>
+      <circle cx="140" cy="111" r="7" fill="#f4c553" opacity=".2"/><circle cx="140" cy="111" r="3" fill="#f4c553"/>
+    </g>
+  </svg>`;
+}
 function overviewSnapshot(overview) {
   const unknown=Number(overview.unknown_container_count)||0;
-  return `<section class="overview-snapshot panel" aria-labelledby="snapshot-title"><div class="overview-section-heading"><h2 id="snapshot-title">Clearing snapshot</h2><span class="report-label">${esc(state.clients.find(c=>String(c.id)===state.client)?.name||'All visible clients')}</span></div><p class="snapshot-total"><strong>${number(overview.total)}</strong><span>Shipments in view</span></p><div class="snapshot-metrics"><dl><dt>Containers recorded</dt><dd>${number(overview.known_container_total)}</dd></dl><dl><dt>Records to review</dt><dd>${number(overview.rows_with_issues)}</dd></dl></div><p class="snapshot-note">${unknown?`Container quantity remains unknown for ${number(unknown)} ${unknown===1?'job':'jobs'}.`:'Recorded quantities across this view.'} Imported stages remain historical proposals until reconciled.</p></section>`;
+  return `<section class="overview-snapshot panel" aria-labelledby="snapshot-title">
+    <div class="overview-section-heading"><h2 id="snapshot-title">Clearing snapshot</h2><span class="report-label">${esc(state.clients.find(c=>String(c.id)===state.client)?.name||'All visible clients')}</span></div>
+    <div class="globe-scene" role="group" aria-label="Illustrative shipping routes" aria-describedby="globe-description">
+      <div class="globe-visual" aria-hidden="true"><canvas class="globe-canvas" aria-hidden="true"></canvas>${globeFallback()}</div>
+      <div class="globe-data"><p class="snapshot-total"><strong>${number(overview.total)}</strong><span>Shipments in view</span></p><div class="snapshot-metrics"><dl><dt>Containers recorded</dt><dd>${number(overview.known_container_total)}</dd></dl><dl><dt>Records to review</dt><dd>${number(overview.rows_with_issues)}</dd></dl></div></div>
+      <div class="globe-controls"><span>Illustrative shipping routes</span><button type="button" class="globe-motion" aria-pressed="false" hidden>Pause animation</button></div>
+      <span id="globe-description" class="visually-hidden">Decorative sea routes and ship movement. This globe does not show live vessel positions.</span>
+    </div>
+    <p class="snapshot-note">${unknown?`Container quantity remains unknown for ${number(unknown)} ${unknown===1?'job':'jobs'}. `:''}Imported stages remain historical proposals until reconciled.</p>
+  </section>`;
 }
 function overviewAttention(overview) {
   const attention=overview.attention||{},items=Array.isArray(attention.items)?attention.items:[];
@@ -180,6 +209,7 @@ function overviewLayout(overview) {
   return `<div class="overview-dashboard"><div class="overview-primary"><div class="overview-top-grid">${overviewPulse(overview)}${overviewSnapshot(overview)}</div>${cards(overview)}<section id="register-panel" class="panel overview-register" aria-label="Shipment register"></section>${lowerPanels()}</div><aside class="overview-rail" aria-label="Team coordination and shipment attention"><section class="desk-home panel"><div class="desk-home-heading"><h2 class="panel-title">Across your teams</h2><button class="text-link" data-go="actions">View desk ${icon('arrow')}</button></div><p class="detail-note">Open coordination items. Queues can overlap.</p>${deskCards(overview.queue_counts,true)}</section><div id="overview-tracking">${trackingOverview(overview.tracking)}</div><div id="overview-attention">${overviewAttention(overview)}</div></aside></div>`;
 }
 async function render() {
+  disposeOverviewGlobe();
   $('#main').classList.toggle('overview-page',state.page==='overview');
   clearTimeout(overviewTrackingTimer);
   const version=++state.version; $('#breadcrumb').textContent=names[state.page];
@@ -198,9 +228,10 @@ async function render() {
     const top=heading()+tabs()+(state.page==='qac'?notice(`${number(overview.rows_with_issues)} records have review findings. A finding describes a source-data question, not confirmed noncompliance.`,true):state.page==='overview'?'':cards(overview));
     const register=`<div id="register-panel" class="panel ${state.page==='overview'?'overview-register':''}"></div>`;
     $('#main').innerHTML=top+(state.page==='overview'?overviewLayout(overview):register);
+    if(state.page==='overview')overviewGlobe=window.LibraGlobe?.mount($('.globe-scene'))||null;
     await loadTable(version);
     if(state.page==='overview'&&overview.tracking?.service_running)overviewTrackingTimer=setTimeout(()=>refreshTrackingOverview(version),15000);
-  } catch(error) { if(version===state.version)$('#main').innerHTML=heading()+`<div class="inline-error" role="alert">${esc(error.message)}<br><button class="button secondary" id="retry-load">Try again</button></div>`; }
+  } catch(error) { if(version===state.version){disposeOverviewGlobe();$('#main').innerHTML=heading()+`<div class="inline-error" role="alert">${esc(error.message)}<br><button class="button secondary" id="retry-load">Try again</button></div>`;} }
 }
 function lowerPanels() {
   const batches=state.batches.filter(batch=>!state.client||String(batch.client_id)===state.client);

@@ -2,6 +2,8 @@
 
 One local server serves frontend assets and JSON endpoints. API success responses contain `ok: true`; failures contain `ok: false` and an `error` message with the appropriate HTTP status. All API data endpoints require an authenticated owner session. JSON POST bodies must be objects; the request limit is 8 MB and decoded CSV limit is 5 MB. There is no CORS access.
 
+The Overview's decorative globe uses two fixed GET-only public assets: `/globe-scene.js` and `/assets/globe-land.json`. The latter contains public-domain land polygons, not shipment or vessel data. These exact routes do not expose arbitrary asset files or application storage. No new operational API or external map request is introduced.
+
 ## Owner access
 
 | Method / route | Behavior |

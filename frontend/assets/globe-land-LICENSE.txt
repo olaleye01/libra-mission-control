@@ -1,0 +1,21 @@
+Made with Natural Earth.
+
+Dataset: Natural Earth 1:110m land polygons, including major islands.
+Source dataset page:
+https://www.naturalearthdata.com/downloads/110m-physical-vectors/110m-land/
+Source geometry:
+https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_land.geojson
+Terms of use:
+https://www.naturalearthdata.com/about/terms-of-use/
+
+License: Public domain. Natural Earth permits modification, redistribution and
+commercial use. Attribution is optional; this notice records provenance.
+
+Local adaptation: GeoJSON properties removed; Polygon/MultiPolygon coordinates
+flattened into a polygons array. Each polygon contains its outer ring followed
+by any holes. Longitude/latitude coordinates rounded to three decimal places;
+consecutive duplicate points removed and rings kept closed. No new geographic
+features or route/vessel information are inferred. WGS84 decimal degrees.
+
+Natural Earth is provided without a guarantee of geographic accuracy or fitness.
+This low-resolution outline is for illustration, not navigation or border claims.

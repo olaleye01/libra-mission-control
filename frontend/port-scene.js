@@ -6,7 +6,6 @@
   if(!scene||!canvas)return;
   const auth=document.querySelector('#auth-screen');
   const toggle=document.querySelector('#port-motion');
-  const stages=[...document.querySelectorAll('[data-port-stage]')];
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   let paused=reduced.matches,visible=false,frameId=0,last=0,elapsed=0,width=0,height=0,failed=false;
   let refresh=()=>{};
@@ -237,8 +236,6 @@
       box(cargo[0],cargo[1]+.27,cargo[2],.60,.055,.80,rgb.dark);
     }
     gl.bindBuffer(gl.ARRAY_BUFFER,dynamicBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(target),gl.DYNAMIC_DRAW);bind(dynamicBuffer);gl.drawArrays(gl.TRIANGLES,0,target.length/11);
-    const stage=p<.18?0:p<.42?1:p<.56?2:p<.81?3:4;
-    stages.forEach(el=>{const active=Number(el.dataset.portStage)===stage;el.classList.toggle('active',active);});
     if(gl.getError()!==gl.NO_ERROR)throw new Error('Port rendering unavailable');
     scene.classList.add('canvas-ready');
   }

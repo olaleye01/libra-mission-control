@@ -20,6 +20,8 @@ Use the button beside the Libra logo to collapse the sidebar into a compact navi
 
 The Overview pairs an Officer’s briefing with a clearing snapshot, the five stage filters and a compact shipment register. The briefing links to next actions on up to three different jobs; its headline counts action items, not shipments. The attention panel lists up to four distinct jobs with recorded holds, reported blockers or review findings. Every panel follows the selected department and client. Historical entries retain their report cut-off or explicitly state that it was not supplied. Unknown container quantities remain separate from the recorded total. Team queues and Carrier watch sit beside the register on desktop; connection details are available in a small disclosure below recent imports. No performance percentages, trends or external connection claims are generated.
 
+The clearing snapshot includes a rotating globe with glowing dashed routes and moving cargo ships. These routes are explicitly illustrative and do not show live vessel positions or confirmed shipment origins. Real counts remain separate beside the scene. The map is bundled locally from public-domain Natural Earth land outlines; no external map service or graphics dependency is required. Pause, reduced motion and a static fallback are supported, and rendering stops offscreen or when leaving Overview. On phones the globe follows the register.
+
 Optional arguments:
 
 ```bash
