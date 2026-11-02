@@ -4,6 +4,8 @@ A local test workspace for multi-client shipment visibility. Slices 1–2.1 incl
 
 Python's standard library is the only backend dependency. The custom HTML/CSS/JavaScript frontend has no package-install or build step.
 
+Read the [project mental model](docs/MENTAL_MODEL.md) for the client explanation, architecture, data flow, failure modes and local recovery guide.
+
 ## Run locally
 
 From this project directory:
