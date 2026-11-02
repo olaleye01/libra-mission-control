@@ -8,6 +8,8 @@
   <link rel="icon" href="/assets/libra-circle-icon.webp" type="image/webp">
   <title>Libra — Shipment Mission Control</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/jarvis.css">
+  <script src="/jarvis.js" defer></script>
   <script src="/globe-scene.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/port-scene.js" defer></script>
@@ -16,7 +18,7 @@
   <div id="boot" class="boot"><span class="brand-symbol"><img src="/assets/libra-circle-icon.webp" alt=""></span><p>Opening your workspace…</p></div>
   <section id="auth-screen" class="auth-screen" hidden>
     <div class="auth-story">
-      <a class="brand" href="/" aria-label="Libra home"><span class="brand-wordmark"><img class="brand-logo" src="/assets/libra-circle-logo.png" alt="Libra Circle"><span class="brand-caption">MISSION CONTROL</span></span><img class="brand-icon" src="/assets/libra-circle-icon.webp" alt=""></a>
+      <a class="brand welcome-brand" href="/" aria-label="Libra Circle Mission Control home"><img class="brand-logo" src="/assets/libra-circle-logo.png" alt="Libra Circle"><span class="welcome-product">Mission Control</span></a>
       <div class="auth-intro"><span class="eyebrow"><i></i> CLEARING OPERATIONS</span><h1>Every move.<br> One clear view.</h1><p>From the first port call to the final warehouse delivery.</p></div>
       <div class="port-scene" aria-hidden="true">
         <div class="port-scene-heading"><span>Logistics diorama</span><span>VESSEL → WAREHOUSE</span></div>
@@ -108,7 +110,7 @@
           <g fill="#d4aa59"><circle cx="27" cy="465" r="2.5"/><circle cx="291" cy="348" r="2.5"/><circle cx="554" cy="372" r="2.5"/></g>
         </svg>
       </div>
-      <div class="port-controls"><div class="port-control-footer"><span>One connected journey</span><button id="port-motion" type="button" aria-pressed="false" aria-label="Pause port animation">Pause animation</button></div></div>
+      <div class="port-controls"><div class="port-control-footer"><span>One connected journey</span><button id="port-motion" type="button" aria-pressed="false" aria-label="Pause port animation" title="Pause animation"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14M16 5v14"/></svg></button></div></div>
     </div>
     <div class="auth-main"><div class="auth-box">
       <span class="test-badge">LOCAL TEST WORKSPACE</span>

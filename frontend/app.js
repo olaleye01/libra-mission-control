@@ -33,6 +33,16 @@ const sourceHeaders = ['S/N','Pre-alert date','Item description','BOL number','T
 const state = {page:'overview',client:'',filter:'',search:'',issues:false,pageNumber:1,clients:[],batches:[],overview:null,csrf:null,batch:null,previewPage:1,previewIssues:false,detail:null,version:0,deskQueue:'all',deskTeam:'',deskStatus:'',department:null,departments:[],managedClients:[]};
 let searchTimer, toastTimer, trackingTimer, overviewTrackingTimer, trackingEpoch=0, detailVersion = 0, tableVersion = 0;
 let overviewGlobe=null;
+let jarvis=null;
+
+function syncJarvisContext() {
+  const detail=$('#detail-dialog');
+  const shipment=detail.open&&state.detail?.id?state.detail.id:null;
+  jarvis?.setHost(detail.open?detail:$('#app'));
+  jarvis?.setContext({department_id:state.department||null,client_id:state.client||null,shipment_id:shipment,
+    department_name:state.departments.find(item=>String(item.id)===state.department)?.name,
+    client_name:state.clients.find(item=>String(item.id)===state.client)?.name});
+}
 
 function disposeOverviewGlobe() {
   overviewGlobe?.dispose();
@@ -84,7 +94,9 @@ async function api(path, body) {
   const payload = await response.json();
   if (!response.ok || !payload.ok) {
     if (response.status===401 && state.csrf) {state.csrf=null; await showAuth();}
-    throw new Error(payload.error || 'The request could not be completed.');
+    const error=new Error(payload.error || 'The request could not be completed.');
+    error.status=response.status;
+    throw error;
   }
   return payload;
 }
@@ -94,6 +106,7 @@ function empty(title,text,action='imports',button='Preview a report',symbol='shi
 }
 
 async function showAuth() {
+  jarvis?.setAuthenticated(false);
   disposeOverviewGlobe();
   clearTimeout(overviewTrackingTimer);
   const session = await api('/api/session');
@@ -140,7 +153,7 @@ async function refreshMeta() {
   $('#nav-imports').textContent=number(batches.imports.filter(x=>x.status==='preview').length);
   $('#sidebar-clients').innerHTML=state.clients.map(c=>`<button class="client-nav ${state.client===String(c.id)?'selected':''}" data-client="${c.id}" title="${esc(c.name)}" aria-label="${esc(c.name)} ${number(c.shipment_count)}"><span class="client-dot" aria-hidden="true"></span><span class="client-name">${esc(c.name)}</span><span class="client-initials" aria-hidden="true">${esc(c.name.length<=3?c.name:initials(c.name))}</span><small>${number(c.shipment_count)}</small></button>`).join('');
 }
-async function start() { await refreshMeta(); await render(); }
+async function start() { await refreshMeta(); jarvis?.setAuthenticated(true); await render(); }
 async function navigate(page,client=state.client) {
   state.page=page; state.client=client; state.filter=''; state.search=''; state.pageNumber=1; state.issues=false;
   $('#sidebar').classList.remove('open'); syncSidebar(); await render();
@@ -187,7 +200,7 @@ function overviewSnapshot(overview) {
     <div class="globe-scene" role="group" aria-label="Illustrative shipping routes" aria-describedby="globe-description">
       <div class="globe-visual" aria-hidden="true"><canvas class="globe-canvas" aria-hidden="true"></canvas>${globeFallback()}</div>
       <div class="globe-data"><p class="snapshot-total"><strong>${number(overview.total)}</strong><span>Shipments in view</span></p><div class="snapshot-metrics"><dl><dt>Containers recorded</dt><dd>${number(overview.known_container_total)}</dd></dl><dl><dt>Records to review</dt><dd>${number(overview.rows_with_issues)}</dd></dl></div></div>
-      <div class="globe-controls"><span>Illustrative shipping routes</span><button type="button" class="globe-motion" aria-pressed="false" hidden>Pause animation</button></div>
+      <div class="globe-controls"><span>Illustrative shipping routes</span><button type="button" class="globe-motion" aria-pressed="false" aria-label="Pause globe animation" title="Pause animation" hidden><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 5v14M16 5v14"/></svg></button></div>
       <span id="globe-description" class="visually-hidden">Decorative sea routes and ship movement. This globe does not show live vessel positions.</span>
     </div>
     <p class="snapshot-note">${unknown?`Container quantity remains unknown for ${number(unknown)} ${unknown===1?'job':'jobs'}. `:''}Imported stages remain historical proposals until reconciled.</p>
@@ -209,6 +222,7 @@ function overviewLayout(overview) {
   return `<div class="overview-dashboard"><div class="overview-primary"><div class="overview-top-grid">${overviewPulse(overview)}${overviewSnapshot(overview)}</div>${cards(overview)}<section id="register-panel" class="panel overview-register" aria-label="Shipment register"></section>${lowerPanels()}</div><aside class="overview-rail" aria-label="Team coordination and shipment attention"><section class="desk-home panel"><div class="desk-home-heading"><h2 class="panel-title">Across your teams</h2><button class="text-link" data-go="actions">View desk ${icon('arrow')}</button></div><p class="detail-note">Open coordination items. Queues can overlap.</p>${deskCards(overview.queue_counts,true)}</section><div id="overview-tracking">${trackingOverview(overview.tracking)}</div><div id="overview-attention">${overviewAttention(overview)}</div></aside></div>`;
 }
 async function render() {
+  syncJarvisContext();
   disposeOverviewGlobe();
   $('#main').classList.toggle('overview-page',state.page==='overview');
   clearTimeout(overviewTrackingTimer);
@@ -328,14 +342,16 @@ async function confirmApply() {
 
 async function openShipment(id) {
   const version=++detailVersion;
+  state.detail=null;
   $('#detail-content').innerHTML='<div class="detail-body"><div class="skeleton" aria-label="Loading shipment"></div></div>';
   if(!$('#detail-dialog').open)$('#detail-dialog').showModal();
+  syncJarvisContext();
   try {const result=await api('/api/shipments/'+encodeURIComponent(id));if(version===detailVersion&&$('#detail-dialog').open){state.detail=result.shipment;renderDetail();}}
   catch(error){if(version===detailVersion)$('#detail-content').innerHTML=`<div class="detail-body"><button class="icon-button" data-close-detail aria-label="Close">${icon('close')}</button><p role="alert">${esc(error.message)}</p></div>`;}
 }
 function openPreviewRow(row) {
   const record=state.batch?.records.find(r=>r.source_row===Number(row));if(!record)return;
-  ++detailVersion;state.detail={...record,client_name:state.batch.client_name,filename:state.batch.filename,report_date:state.batch.report_date,batch_id:state.batch.id,job_id:'Preview · row '+row,history:[{at:state.batch.created_at,actor:'owner',action:'import_preview_created'}]};renderDetail();$('#detail-dialog').showModal();
+  ++detailVersion;state.detail={...record,client_name:state.batch.client_name,filename:state.batch.filename,report_date:state.batch.report_date,batch_id:state.batch.id,job_id:'Preview · row '+row,history:[{at:state.batch.created_at,actor:'owner',action:'import_preview_created'}]};renderDetail();$('#detail-dialog').showModal();syncJarvisContext();
 }
 function inputField(name,label,value='',type='text',extra='') {
   return `<div class="field"><label for="edit-${name}">${esc(label)}</label><input id="edit-${name}" name="${name}" type="${type}" value="${esc(value??'')}" ${extra}></div>`;
@@ -466,6 +482,7 @@ function bindCoordination(r,selectedKey='') {
   if(r.operation.coordination[selectedKey])fill(selectedKey);
 }
 function renderDetail(tab='milestones',selectedKey='') {
+  syncJarvisContext();
   clearTimeout(trackingTimer);const trackingRender=++trackingEpoch;
   const r=state.detail,d=r.dates,editable=Boolean(r.id),o=r.operation;
   const available=editable?[['milestones','Summary'],['edit','Update job'],['invoices','Invoices'],['movements','Movements'],['followups','Follow-ups'],['coordination','Team coordination'],['tracking','Carrier tracking'],['source','Source & history']]:[['milestones','Milestones'],['source','Original source']];
@@ -626,6 +643,13 @@ document.addEventListener('keydown',event=>{
 $('#notification-info').addEventListener('click',notificationsInfo);
 $('#logout').addEventListener('click',async()=>{try{await api('/api/auth/logout',{});state.csrf=null;state.batch=null;await showAuth();}catch(error){toast(error.message);}});
 $('#detail-dialog').addEventListener('click',event=>{if(event.target===$('#detail-dialog'))$('#detail-dialog').close();});
+$('#detail-dialog').addEventListener('close',()=>{state.detail=null;syncJarvisContext();});
+$('#action-dialog').addEventListener('toggle',event=>{if(event.newState==='open')jarvis?.close();});
+jarvis=window.LibraJarvis?.mount({api,onOpenShipment:async(id,tab)=>{
+  jarvis?.close();
+  await openShipment(id);
+  if(state.detail?.id===Number(id))renderDetail(tab==='summary'?'milestones':tab);
+}})||null;
 paintIcons();syncSidebar();
 showAuth().catch(error=>{$('#boot').innerHTML=`<span class="brand-symbol">L</span><p>Workspace unavailable</p><p>${esc(error.message)}</p><button class="button secondary" id="boot-retry">Try again</button>`;$('#boot-retry').onclick=()=>location.reload();});
 

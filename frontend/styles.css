@@ -340,7 +340,8 @@ main { padding: 28px 32px 32px; min-height: calc(100vh - 108px); max-width: 1660
 .globe-data .snapshot-metrics dd { margin: 3px 0 0; font-size: 20px; }
 .globe-controls { position: absolute; inset: auto 0 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 30px; }
 .globe-controls > span { color: #616a75; font-size: 12px; line-height: 1.4; }
-.globe-motion { flex: none; background: #fff; border: 1px solid #d6dfe9; border-radius: 4px; color: #45566b; padding: 5px 7px; min-height: 30px; font-size: 12px; }
+.globe-motion { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 34px; height: 34px; background: #fff; border: 1px solid #d6dfe9; border-radius: 4px; color: #45566b; padding: 0; }
+.globe-motion svg { width: 16px; height: 16px; stroke-width: 2; }
 .globe-motion:hover { background: #eef3f8; }
 .overview-snapshot .snapshot-note { margin-top: 9px; font-size: 12px; line-height: 1.5; }
 .overview-rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
@@ -552,9 +553,10 @@ dialog::backdrop { background: #171e2866; }
 .auth-story { position: relative; isolation: isolate; background: #07171b; color: #fff; padding: 32px 40px 24px; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; gap: 20px; height: 100svh; min-height: 720px; overflow: hidden; }
 .auth-story::before { content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none; background: radial-gradient(ellipse at 58% 60%, #183d4442, transparent 65%), linear-gradient(110deg, #ffffff02, transparent 60%); } /* taste-skill-ignore: Retain the existing welcome diorama lighting; dashboard surfaces stay flat. */
 .auth-story::after { content: ''; position: absolute; inset: 20px; z-index: -1; pointer-events: none; border: 1px solid #94c8ca0d; }
-.auth-story > .brand { justify-self: start; position: relative; z-index: 2; }
+.auth-story > .welcome-brand { justify-self: start; position: relative; z-index: 2; align-items: center; gap: 16px; }
+.welcome-brand .brand-logo { flex: none; }
+.welcome-product { display: block; width: 85px; padding-left: 16px; border-left: 1px solid #75939766; color: #c6d6d8; font-size: 12px; font-weight: 500; line-height: 1.4; letter-spacing: .09em; text-transform: uppercase; }
 .auth-story .eyebrow { color: #b8c8d8; font-size: 12px; }
-.auth-story .brand-caption { color: #b8c8d8; }
 .auth-story h1 { font: 400 clamp(36px, 3.8vw, 54px)/1.02 Georgia, serif; letter-spacing: -1.7px; margin: 15px 0 14px; color: #eef4f2; }
 .auth-story p { font-size: 13px; color: #a8bec3; line-height: 1.7; max-width: 430px; }
 .auth-intro { position: relative; z-index: 1; }
@@ -569,7 +571,8 @@ dialog::backdrop { background: #171e2866; }
 .port-scene.canvas-ready .port-art { display: none; }
 .port-controls { position: relative; z-index: 2; align-self: end; }
 .port-control-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 17px; color: #91abb1; font-size: 10px; }
-#port-motion { background: transparent; color: #c3d5d6; font-size: 10px; border: 1px solid #809ea63b; border-radius: 4px; padding: 7px 9px; }
+#port-motion { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 34px; height: 34px; background: transparent; color: #c3d5d6; border: 1px solid #809ea63b; border-radius: 4px; padding: 0; }
+#port-motion svg { width: 16px; height: 16px; stroke-width: 2; }
 #port-motion:hover { border-color: #a7ced0; color: #fff; }
 #port-motion:focus-visible { outline-color: #a7e5e1; }
 .port-scene.scene-paused .port-art * { animation-play-state: paused; }
@@ -762,7 +765,7 @@ dialog::backdrop { background: #171e2866; }
   .globe-visual { left: 100px; right: -12px; bottom: 40px; }
   .globe-data { width: 108px; }
   .globe-controls { min-height: 40px; }
-  .globe-motion { min-height: 40px; }
+  .globe-motion { width: 44px; height: 44px; }
   .overview-rail .desk-home { padding: 16px 16px 10px; }
   .overview-rail .desk-card { min-height: 44px; }
   .overview-rail .desk-card span { font-size: 13px; }
@@ -877,6 +880,7 @@ dialog::backdrop { background: #171e2866; }
   .port-scene { width: calc(100% + 48px); min-height: 0; margin: 0 -24px; }
   .port-scene-heading { top: 0; left: 24px; right: 24px; font-size: 8px; }
   .port-control-footer { margin-top: 12px; }
+  #port-motion { width: 44px; height: 44px; }
   .auth-story .brand-logo { width: 166px; }
   .auth-main { padding: 32px 24px; align-items: flex-start; }
   .auth-box h2 { font-size: 30px; }

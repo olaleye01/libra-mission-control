@@ -11,7 +11,12 @@
   let refresh=()=>{};
   const syncPause=()=>{
     scene.classList.toggle('scene-paused',paused);
-    if(toggle){toggle.textContent=paused?'Play animation':'Pause animation';toggle.setAttribute('aria-label',paused?'Play port animation':'Pause port animation');toggle.setAttribute('aria-pressed',String(paused));}
+    if(toggle){
+      toggle.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paused?'<path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none"/>':'<path d="M8 5v14M16 5v14"/>'}</svg>`;
+      toggle.title=paused?'Play animation':'Pause animation';
+      toggle.setAttribute('aria-label',paused?'Play port animation':'Pause port animation');
+      toggle.setAttribute('aria-pressed',String(paused));
+    }
   };
   toggle?.addEventListener('click',()=>{paused=!paused;syncPause();refresh();});
   reduced.addEventListener('change',()=>{paused=reduced.matches;syncPause();refresh();});

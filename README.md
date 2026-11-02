@@ -93,9 +93,17 @@ No authority list or regulatory requirements are inferred. The detailed Regulato
 
 All coordination changes share the shipment revision check, idempotency key and before/after audit history. No service connects to or contacts a team member, authority, client or provider.
 
+## Jarvis
+
+Open **Jarvis** at the bottom right for read-only help with the selected department, client or open job. The conversation starts empty; type a question or choose a suggested prompt to request a briefing. Starting a new chat or changing the selection clears the conversation without sending a request. Ask about next actions, an exact BL or an LMC job ID, and use the reply's links to open the relevant shipment. Duplicate BLs remain separate jobs. Chat memory stays in the running server, expires after 30 minutes of inactivity and is cleared by a restart; it is not saved to browser storage or the shipment database.
+
+This release uses **Local briefing**: calculated guidance from existing shipment facts and pending actions. Hermes is the selected AI engine but remains disconnected until an isolated shipment-only runtime has been verified. There is no configurable switch that forwards shipment data to the existing EXECUTOR. The assistant cannot edit records, browse files, run commands, make payments or send messages. Historical report cut-offs and unknown source information remain explicit.
+
+The microphone is enabled only when the browser confirms installed on-device English recognition. Dictated text remains in the composer for review before sending. Read-aloud uses a local English device voice when available. Unsupported browsers keep chat available and explain the voice limitation; audio is not silently sent to a remote speech service.
+
 ## Next
 
-Hermes chat/tools, Telegram shipment actions, scheduled notifications, Odoo and additional client CSV mappings remain later slices. Manual jobs already support all clients. No Hermes profiles, credentials, gateway or routing are changed. There is no live deployment or outbound notification transport in this build.
+The verified Hermes connection, Telegram shipment actions, scheduled notifications, Odoo and additional client CSV mappings remain later slices. Manual jobs already support all clients. No Hermes profiles, credentials, gateway or routing are changed. There is no live deployment or outbound notification transport in this build.
 
 ## Checks
 

@@ -24,6 +24,7 @@ from store import Store
 ROOT = Path(__file__).resolve().parent.parent
 MAX_BODY = 8 * 1024 * 1024
 ASSETS = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/styles.css": "styles.css", "/port-scene.js": "port-scene.js", "/globe-scene.js": "globe-scene.js",
+          "/jarvis.js": "jarvis.js", "/jarvis.css": "jarvis.css",
           "/assets/globe-land.json": "assets/globe-land.json",
           "/assets/libra-circle-logo.png": "assets/libra-circle-logo.png",
           "/assets/libra-circle-icon.webp": "assets/libra-circle-icon.webp"}
@@ -37,7 +38,9 @@ class Application:
         self.routes = []
         from tracking import Tracking
         self.tracking = Tracking(self)
-        for module in ("auth", "clients", "imports", "shipments", "operations", "report_updates", "tracking"):
+        from jarvis import Jarvis
+        self.jarvis = Jarvis(self)
+        for module in ("auth", "clients", "imports", "shipments", "operations", "report_updates", "tracking", "jarvis"):
             importlib.import_module(module).register(self.route, ApiError)
 
     def route(self, method, path, public=False):

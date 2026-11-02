@@ -155,7 +155,8 @@
       if(!button)return;
       button.hidden=!ready||failed||lost;
       button.disabled=!gl||failed||lost;
-      button.textContent=button.disabled?'Static globe':paused?'Play animation':'Pause animation';
+      button.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paused?'<path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none"/>':'<path d="M8 5v14M16 5v14"/>'}</svg>`;
+      button.title=button.disabled?'Static globe':paused?'Play animation':'Pause animation';
       button.setAttribute('aria-label',button.disabled?'Static shipping globe':paused?'Play globe animation':'Pause globe animation');
       button.setAttribute('aria-pressed',String(paused));
     };
